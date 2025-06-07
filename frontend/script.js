@@ -9,7 +9,7 @@ const audioPlayer = document.getElementById("player"); // Renamed for clarity
 
 const BASE_URL = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
     ? "http://127.0.0.1:8000"
-    : "https://verifyit-backend-vkmt.onrender.com"; // <-- Update this if your Render URL changes!
+    : "https://proverify.onrender.com"; // <-- Update this if your Render URL changes!
 
 const modes = ["voiceMode", "textMode", "imageMode"];
 
