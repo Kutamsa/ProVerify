@@ -1,0 +1,5 @@
+.env
+venv/
+.venv/
+Verifyit.git/
+gcloud_key.json
