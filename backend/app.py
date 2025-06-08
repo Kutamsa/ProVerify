@@ -1,21 +1,22 @@
+import os
+import io
+import base64
+import tempfile
+import mimetypes # For MIME type inference from file extension
+import imghdr # For robust image type inference from content
+from pydub import AudioSegment # For audio processing (used in Telegram bot)
 from google.cloud import texttospeech
 from fastapi import FastAPI, UploadFile, File, Form, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-import tempfile
-import os
-import uvicorn
 from openai import OpenAI
-import base64
 from dotenv import load_dotenv
 import json
-import imghdr # <--- NEW IMPORT: for guessing image type from content
 
-# Import Telegram bot setup from our new module
-from . import telegram_bot_handlers # Relative import within backend package
-from telegram import Update # Import Update class directly here for de_json
+# Import Telegram bot setup from our new module (relative import)
+from . import telegram_bot_handlers 
 
 load_dotenv()
 
@@ -190,7 +191,7 @@ Instructions:
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
 async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
-    # --- START NEW IMAGE TYPE INFERENCE LOGIC ---
+    # --- START NEW IMAGE TYPE INFERENCE AND VALIDATION LOGIC ---
     # Try to guess mime type from image content, which is more robust than just header
     # and map it to common types OpenAI expects.
     guessed_type = imghdr.what(None, h=image_bytes)
@@ -203,7 +204,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
     elif guessed_type == 'gif':
         mime_type_for_openai = 'image/gif'
     # imghdr does not support webp directly, so we trust the original mime_type if it's webp
-    elif mime_type == 'image/webp':
+    elif mime_type == 'image/webp': # Check if original MIME type is webp
         mime_type_for_openai = 'image/webp'
     
     # Fallback to original mime_type if imghdr couldn't guess or it's not a common type
@@ -216,10 +217,20 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
 
     print(f"DEBUG: Original MIME type from FastAPI: {mime_type}")
     print(f"DEBUG: Inferred MIME type for OpenAI: {mime_type_for_openai}")
-
-    # --- END NEW IMAGE TYPE INFERENCE LOGIC ---
-
+    print(f"DEBUG: Image bytes length: {len(image_bytes)}")
+        
+    # Validate image bytes are not empty
+    if len(image_bytes) == 0:
+        raise ValueError("Empty image data received")
+    
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
+    print(f"DEBUG: Base64 image length: {len(b64_image)}")
+    print(f"DEBUG: Base64 preview (first 50 chars): {b64_image[:50]}...")
+        
+    # Create the data URL - this is the critical part
+    data_url = f"data:{mime_type_for_openai};base64,{b64_image}"
+    # --- END NEW IMAGE TYPE INFERENCE AND VALIDATION LOGIC ---
+
     messages = [
         {
             "role": "system",
@@ -239,29 +250,37 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": f"Please fact-check this image. Context: {caption}" if caption else "Please fact-check this image."},
+                {
+                    "type": "text", 
+                    "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.{f"Context provided: {caption}" if caption else "No additional context provided."}Instructions:- Respond in clear, simple Telugu — use English only where needed.- Do not respond in bullet points. Write like you're explaining it to someone directly.- Analyze what you see in the image and determine if it appears authentic or manipulated.- If you detect signs of manipulation, explain what you notice.- If it appears genuine, provide context about what the image shows.- If it's controversial or you're uncertain, be honest about limitations.- Do not repeat yourself.- Use natural sentence flow like a real person would."""
+                },
                 {
                     "type": "image_url",
-                    # Use the dynamically inferred mime_type_for_openai
-                    "image_url": {"url": f"data:{mime_type_for_openai};base64,{b64_image}"}
+                    "image_url": {"url": data_url} # Use the dynamically created data_url
                 }
             ],
         }
     ]
 
     try:
+        print("DEBUG: Sending request to OpenAI...")
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o", # Model switched to gpt-4o for image processing as proposed in new code
             messages=messages,
             max_tokens=500
         )
+        print("DEBUG: OpenAI request successful")
         return {"result": response.choices[0].message.content}
     except Exception as e:
         print(f"Error calling OpenAI API for image: {e}")
+        # Additional debugging for OpenAI errors
+        if hasattr(e, 'response') and e.response:
+            print(f"OpenAI API response status: {e.response.status_code}")
+            print(f"OpenAI API response body: {e.response.text}")
         # Re-raise the exception after printing for visibility in logs
         raise # Re-raise to be caught by the FastAPI endpoint handler
 
-# --- WEB APP ENDPOINTS (now call shared fact-checking functions) ---
+# --- WEB APP ENDPOINTS ---
 @app.post("/factcheck/text")
 async def factcheck_text_web(input: TextInput):
     try:
@@ -292,14 +311,74 @@ async def factcheck_image_web(
     file: UploadFile = File(...),
     caption: str = Form("")
 ):
+    """
+    Fact-checks an image with an optional caption using OpenAI's vision model.
+    Includes robust file type and header validation.
+    """
     try:
+        # Validate file is actually an image based on content_type header
+        if not file.content_type or not file.content_type.startswith('image/'):
+            return JSONResponse(
+                content={"error": f"Invalid file type. Expected image, got: {file.content_type}"}, 
+                status_code=400
+            )
+        
+        print(f"DEBUG: Received file - Name: {file.filename}, Content-Type: {file.content_type}, Size: {file.size}")
+        
         image_bytes = await file.read()
-        # file.content_type is what FastAPI gets from the browser's header
+        
+        # Validate we actually got image data
+        if len(image_bytes) == 0:
+            return JSONResponse(
+                content={"error": "Empty file received"}, 
+                status_code=400
+            )
+            
+        print(f"DEBUG: Read {len(image_bytes)} bytes from uploaded file")
+        
+        # Additional validation - check if the image bytes start with valid image headers (magic numbers)
+        if len(image_bytes) < 8: # Minimum size for most common image headers
+            return JSONResponse(
+                content={"error": "File too small to be a valid image"}, 
+                status_code=400
+            )
+        
+        header = image_bytes[:12] # Check first few bytes
+        is_valid_image = False
+        detected_format = "Unknown"
+
+        if header.startswith(b'\x89PNG\r\n\x1a\n'):  # PNG
+            is_valid_image = True
+            detected_format = "PNG"
+        elif header.startswith(b'\xff\xd8\xff'):  # JPEG
+            is_valid_image = True
+            detected_format = "JPEG"
+        elif header.startswith(b'GIF8'):  # GIF
+            is_valid_image = True
+            detected_format = "GIF"
+        # WebP magic number: RIFF (52 49 46 46) at start, and WEBP at offset 8
+        elif header.startswith(b'RIFF') and len(image_bytes) >= 12 and image_bytes[8:12] == b'WEBP': 
+            is_valid_image = True
+            detected_format = "WebP"
+                
+        if not is_valid_image:
+            return JSONResponse(
+                content={"error": "File does not appear to be a valid image format"}, 
+                status_code=400
+            )
+            
+        print(f"DEBUG: Detected image format via magic number: {detected_format}")
+        
+        # Pass file.content_type to perform_image_factcheck, which will then use imghdr
         response = await perform_image_factcheck(image_bytes, file.content_type, caption)
         return JSONResponse(content=response)
+            
+    except ValueError as ve: # Catch validation errors raised by perform_image_factcheck
+        print(f"Validation error in factcheck_image_web: {ve}")
+        return JSONResponse(content={"error": str(ve)}, status_code=400)
     except Exception as e:
         print(f"Error in web factcheck_image: {e}")
-        return JSONResponse(content={"error": str(e)}, status_code=500)
+        return JSONResponse(content={"error": f"Internal server error: {str(e)}"}, status_code=500)
 
 @app.post("/factcheck/tts")
 async def generate_tts_web(input: TextInput):
@@ -363,6 +442,8 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         req_json = await request.json()
+        # Ensure Update is imported from telegram for de_json
+        from telegram import Update 
         update = Update.de_json(req_json, telegram_application.bot)
         
         if update:
@@ -377,6 +458,8 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"):
         print("Running Telegram bot in local polling mode...")
+        # Make sure to import Update if running this block directly for telegram.Update.de_json
+        from telegram import Update 
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
         telegram_bot_handlers.initialize_bot_components(
             openai_client_instance=client,
