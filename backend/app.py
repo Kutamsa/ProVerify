@@ -31,7 +31,7 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 # --- Gemini API Config (for Website Image Processing ONLY) ---
 # For Gemini API, the API key is automatically provided by Canvas runtime if left empty.
 # If you are deploying this outside Canvas or need a specific key, you'd set it here.
-GEMINI_API_KEY = "" # Leave this empty for Canvas, or put your Gemini API key here
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Leave this empty for Canvas, or put your Gemini API key here
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # --- TELEGRAM BOT CONFIG ---
