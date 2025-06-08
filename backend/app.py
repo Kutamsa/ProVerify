@@ -239,7 +239,7 @@ async def perform_text_factcheck(text: str) -> str:
                     "content": f"Fact-check this: {text}"
                 }
             ],
-            model="gpt-4o", # Using gpt-4o as discussed
+            model="o4-mini", # Changed to o4-mini
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
@@ -461,8 +461,8 @@ async def get_news_articles(
             query += " WHERE a.source_id = %s"
             params.append(source_id)
 
-        # Removed 'ORDER BY a.pub_date DESC NULLS LAST' to address potential issues
-        query += " ORDER BY a.fetched_at DESC LIMIT %s OFFSET %s;"
+        # Changed ORDER BY to use 'fetched_at' for more reliability without 'created_at'
+        query += " ORDER BY a.fetched_at DESC NULLS LAST LIMIT %s OFFSET %s;"
         params.extend([limit, offset])
 
         cur.execute(query, params)
@@ -491,10 +491,10 @@ async def get_news_articles(
                 else: # Attempt to parse if it's a string
                     try:
                         # Attempt to parse common formats
-                        pub_date_obj = datetime.fromisoformat(article['pub_date'])
+                        pub_date_obj = datetime.fromisoformat(str(article['pub_date']))
                     except ValueError:
                         try: # Fallback for formats like feedparser might return
-                            pub_date_obj = datetime.strptime(article['pub_date'], '%a, %d %b %Y %H:%M:%S %z')
+                            pub_date_obj = datetime.strptime(str(article['pub_date']), '%a, %d %b %Y %H:%M:%S %z')
                         except ValueError:
                             print(f"Warning: Could not parse pub_date string: {article['pub_date']}")
                             pub_date_obj = None # Set to None if parsing fails

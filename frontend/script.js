@@ -81,6 +81,7 @@ async function toggleRecording() {
         mediaRecorder.stop();
         recordLabel.textContent = "Processing...";
         recordBtn.classList.remove("recording");
+        recordBtn.textContent = "🎤"; // Change back to mic symbol
     } else {
         audioChunks = [];
         try {
@@ -134,6 +135,7 @@ async function toggleRecording() {
             mediaRecorder.start();
             recordLabel.textContent = "Recording...";
             recordBtn.classList.add("recording");
+            recordBtn.textContent = "⏹️"; // Change to stop symbol
         } catch (error) {
             console.error("Error accessing microphone:", error);
             recordLabel.textContent = "Error: Microphone access denied.";
@@ -266,7 +268,16 @@ async function addNewsSource() {
             showMessageBox("Source added successfully!");
             rssUrlInput.value = "";
             sourceNameInput.value = "";
-            loadNewsSources(); // Reload sources to display the new one
+            await loadNewsSources(); // Reload sources to display the new one
+            // After adding a new source, proactively fetch and store its articles
+            // Then, fetch and display articles for the currently selected source, or all news
+            // If there's no activeSourceId, it will fetch all news by default.
+            // If there's an activeSourceId, we re-select it to refresh its articles.
+            if (activeSourceId) {
+                await selectNewsSource(activeSourceId);
+            } else {
+                fetchNewsArticles(); // Load all news if no specific source was selected
+            }
         } else {
             showMessageBox(`Error: ${data.error || "Failed to add source."}`, true);
         }
