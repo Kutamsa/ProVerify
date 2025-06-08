@@ -213,7 +213,7 @@ async def startup_event():
 
     if TELEGRAM_BOT_TOKEN:
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-        # FIX: Call initialize() after building the application object
+        # FIX: Call initialize() after building the application object (for webhook mode)
         await telegram_application.initialize()
         
         webhook_base_url = os.getenv("RENDER_SERVICE_URL")
@@ -267,7 +267,7 @@ if __name__ == "__main__":
     if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"):
         print("Running Telegram bot in local polling mode...")
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-        await telegram_application.initialize() # Initialize for local polling too
+        # REMOVED: await telegram_application.initialize() here, as run_polling() handles it
         telegram_bot_handlers.initialize_bot_components(
             openai_client_instance=client,
             tts_func=text_to_speech,
