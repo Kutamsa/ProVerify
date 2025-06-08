@@ -29,15 +29,15 @@ import feedparser
 
 load_dotenv()
 
-# --- Load Environment Variables using the EXACT names you provided ---
-OPENAI_API_KEY = os.getenv("OPENAI API KEY")
-GEMINI_API_KEY = os.getenv("GEMINI API KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM BOT TOKEN")
+# --- Load Environment Variables using standard underscore naming ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Convert comma-separated string to a list of integers
-AUTHORIZED_TELEGRAM_USER_IDS = [int(x) for x in os.getenv("AUTHORIZED TELEGRAM USER IDS", "").split(',') if x.strip().isdigit()]
-DATABASE_URL = os.getenv("DATABASE URL")
-RENDER_SERVICE_URL = os.getenv("RENDER SERVICE URL")
-GOOGLE_CREDENTIALS_JSON_CONTENT = os.getenv("GOOGLE CREDENTIALS JSON") # This holds the JSON string content
+AUTHORIZED_TELEGRAM_USER_IDS = [int(x) for x in os.getenv("AUTHORIZED_TELEGRAM_USER_IDS", "").split(',') if x.strip().isdigit()]
+DATABASE_URL = os.getenv("DATABASE_URL")
+RENDER_SERVICE_URL = os.getenv("RENDER_SERVICE_URL")
+GOOGLE_CREDENTIALS_JSON_CONTENT = os.getenv("GOOGLE_CREDENTIALS_JSON") # This holds the JSON string content
 
 # --- FastAPI App Setup ---
 app = FastAPI()
@@ -50,6 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Initialize OpenAI Client (requires OPENAI_API_KEY)
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- Google Text-to-Speech Client Initialization (using GOOGLE_CREDENTIALS_JSON) ---
 tts_client = None # Initialize as None, will be set up in startup event
@@ -75,7 +78,6 @@ async def startup_event():
             # Set the GOOGLE_APPLICATION_CREDENTIALS environment variable for the current process
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file_path
             tts_client = texttospeech.TextToSpeechClient() # Initialize TTS client
-            # print("Google Text-to-Speech client initialized successfully.") # Removed for no logs
 
         except json.JSONDecodeError:
             raise RuntimeError("GOOGLE_CREDENTIALS_JSON environment variable is not valid JSON.")
@@ -87,17 +89,14 @@ async def startup_event():
         try:
             tts_client = texttospeech.TextToSpeechClient()
         except Exception as e:
-            raise RuntimeError(f"Google_credentials_json not found, and TTS client initialization failed: {e}")
+            # Re-raise to ensure startup failure if TTS is crucial and misconfigured
+            raise RuntimeError(f"GOOGLE_CREDENTIALS_JSON not found, and TTS client initialization failed: {e}")
 
-    # The Telegram bot local polling is handled in the __main__ block for local dev
-    # On Render, it's driven by webhooks, so no polling setup needed here.
-    pass # This startup event already handles db init and TTS client setup
+    pass
 
 # --- Async Function for Text-to-Speech ---
 async def text_to_speech(text: str) -> bytes:
     if not tts_client:
-        # Handle case where TTS client failed to initialize
-        # print("Text-to-Speech client not initialized. Cannot synthesize speech.") # Removed for no logs
         return b"" # Return empty bytes or raise a specific error
 
     synthesis_input = texttospeech.SynthesisInput(text=text)
@@ -206,7 +205,7 @@ async def fact_check_audio(file: UploadFile = File(...)):
         # Use tempfile for handling audio, ensure cleanup
         with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_audio_file:
             temp_audio_file.write(audio_bytes)
-        
+
         # Open the file again for OpenAI API
         with open(temp_audio_file.name, "rb") as audio_file_for_openai:
             transcription_response = openai_client.audio.transcriptions.create(
@@ -280,8 +279,9 @@ class AddSourceRequest(BaseModel):
 
 # Database connection function for PostgreSQL
 def get_news_db_connection():
+    # Now correctly checking for DATABASE_URL with underscores
     if not DATABASE_URL:
-        raise ValueError("DATABASE URL environment variable not set. News Feed functionality will not work without a database connection.")
+        raise ValueError("DATABASE_URL environment variable not set. News Feed functionality will not work without a database connection.")
 
     result = urlparse(DATABASE_URL)
     username = result.username
