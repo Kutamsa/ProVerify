@@ -1,11 +1,11 @@
 // DOM Elements
 const resultOutput = document.getElementById("resultOutput");
 const transcriptionBox = document.getElementById("transcriptionBox");
-const transcriptionText = document.getElementById("transcriptionText"); // Get the p element
+const transcriptionText = document.getElementById("transcriptionText");
 const loadingSpinner = document.getElementById("loadingSpinner");
 const recordBtn = document.getElementById("recordBtn");
 const recordLabel = document.getElementById("recordLabel");
-const audioPlayer = document.getElementById("player"); // Renamed for clarity
+const audioPlayer = document.getElementById("player");
 
 // NEW DOM Elements for News Feed
 const rssUrlInput = document.getElementById("rssUrlInput");
@@ -13,230 +13,185 @@ const sourceNameInput = document.getElementById("sourceNameInput");
 const addSourceBtn = document.getElementById("addSourceBtn");
 const articlesList = document.getElementById("articlesList");
 const newsArticlesContainer = document.getElementById("newsArticlesContainer");
+const newsSourceButtonsContainer = document.getElementById("newsSourceButtonsContainer"); // NEW
+const loadMoreBtn = document.getElementById("loadMoreBtn"); // NEW
 
 const BASE_URL = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
     ? "http://127.0.0.1:8000"
     : "https://proverify.onrender.com"; // <-- Update this if your Render URL changes!
 
-const modes = ["voiceMode", "textMode", "imageMode", "newsFeedMode"]; // Added newsFeedMode (assuming you might have a button for it)
+const modes = ["voiceMode", "textMode", "imageMode"]; // newsFeedMode is not a separate display mode, it's a section
+
+let mediaRecorder;
+let audioChunks = [];
+let activeSourceId = null; // NEW: To keep track of the currently selected source
+let currentPage = 0; // NEW: For pagination
+const articlesPerPage = 10; // NEW: Limit articles to 10 per page
 
 function showMode(modeId) {
     modes.forEach(mode => {
         const element = document.getElementById(mode);
-        if (element) { // Check if the element exists in the DOM
+        if (element) {
             element.style.display = (mode === modeId) ? "block" : "none";
         }
     });
-    resultOutput.textContent = "Fact checked results will appear here..."; // Reset result text
-    transcriptionText.textContent = "(No transcription yet)"; // Reset transcription text
-    transcriptionBox.style.display = "none"; // Hide transcription box initially
-    // Also stop any currently playing audio when switching modes
-    if (audioPlayer) {
-        audioPlayer.pause();
-        audioPlayer.src = "";
-        audioPlayer.style.display = "none";
+}
+
+function showMessageBox(message) {
+    const messageBox = document.createElement("div");
+    messageBox.className = "message-box";
+    messageBox.textContent = message;
+    document.body.appendChild(messageBox);
+
+    setTimeout(() => {
+        messageBox.remove();
+    }, 3000);
+}
+
+function startRecording() {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                uploadAudio(audioBlob);
+                audioChunks = [];
+            };
+            mediaRecorder.start();
+            recordLabel.textContent = "Recording... Click to stop";
+            recordBtn.classList.add("recording");
+        })
+        .catch(err => {
+            console.error("Error accessing microphone:", err);
+            showMessageBox("Microphone access denied or error: " + err.message);
+        });
+}
+
+function stopRecording() {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        recordLabel.textContent = "Processing audio...";
+        recordBtn.classList.remove("recording");
     }
 }
 
-// TEXT FACT CHECKING
+function toggleRecording() {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
+async function uploadAudio(audioBlob) {
+    loadingSpinner.style.display = "block";
+    transcriptionBox.style.display = "none";
+    resultOutput.textContent = "Fact checked results will appear here...";
+    audioPlayer.style.display = "none";
+
+    const formData = new FormData();
+    formData.append("file", audioBlob, "audio.webm");
+
+    try {
+        const response = await fetch(`${BASE_URL}/factcheck/audio`, {
+            method: "POST",
+            body: formData,
+        });
+
+        const data = await response.json();
+        loadingSpinner.style.display = "none";
+
+        if (response.ok) {
+            transcriptionBox.style.display = "block";
+            transcriptionText.textContent = data.transcription || "No transcription available.";
+            resultOutput.textContent = data.result || "No fact-check result available.";
+            if (data.audio_result) {
+                audioPlayer.src = `data:audio/mp3;base64,${data.audio_result}`;
+                audioPlayer.style.display = "block";
+                audioPlayer.play();
+            }
+        } else {
+            resultOutput.textContent = `Error: ${data.error || "Unknown error"}`;
+            showMessageBox(`Error: ${data.error || "Unknown error"}`);
+        }
+    } catch (err) {
+        loadingSpinner.style.display = "none";
+        console.error("Upload audio error:", err);
+        resultOutput.textContent = "Failed to fact-check audio. Network error or server issue.";
+        showMessageBox("Failed to fact-check audio. Please try again.");
+    }
+}
+
 async function submitText() {
-    const input = document.getElementById("inputText").value.trim();
-    if (!input) {
-        // Using custom modal/message box instead of alert()
-        showMessageBox("Please enter some text to fact-check.");
+    const inputText = document.getElementById("inputText").value;
+    if (!inputText.trim()) {
+        showMessageBox("Please enter text to fact-check.");
         return;
     }
 
-    resultOutput.textContent = "Checking...";
-    loadingSpinner.style.display = "inline-block";
+    loadingSpinner.style.display = "block";
+    resultOutput.textContent = "Fact checked results will appear here...";
+    audioPlayer.style.display = "none";
 
     try {
         const response = await fetch(`${BASE_URL}/factcheck/text`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text: input }),
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ text: inputText }),
         });
 
         const data = await response.json();
-        resultOutput.textContent = data.result || data.error || "Unknown error";
-
-        // Play the audio result if available
-        if (data.audio_result) {
-            playBase64Audio(data.audio_result);
-        } else if (data.error) {
-            showMessageBox(`Error: ${data.error}`);
-        }
-
-    } catch (err) {
-        console.error("Text fact-check error:", err);
-        resultOutput.textContent = "Unable to process text. Network error or server issue.";
-        showMessageBox("Failed to process text. Please try again.");
-    } finally {
         loadingSpinner.style.display = "none";
-    }
-}
 
-// AUDIO FILE UPLOAD
-async function uploadAudio() {
-    const fileInput = document.getElementById("audioInput");
-    const file = fileInput.files[0];
-    if (!file) {
-        showMessageBox("Please select an audio file first.");
-        return;
-    }
-
-    const formData = new FormData();
-    formData.append("file", file);
-
-    resultOutput.textContent = "Uploading & checking...";
-    loadingSpinner.style.display = "inline-block";
-    transcriptionBox.style.display = "none"; // Hide transcription box while uploading
-
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => {
-            controller.abort();
-            resultOutput.textContent = "Request timed out. Please try again.";
-            loadingSpinner.style.display = "none";
-            showMessageBox("Audio upload timed out. Please try again.");
-        }, 30000); // 30 seconds timeout
-
-        const response = await fetch(`${BASE_URL}/factcheck/audio`, {
-            method: "POST",
-            body: formData,
-            signal: controller.signal,
-        });
-        clearTimeout(timeout);
-
-        const data = await response.json();
-        if (data.transcription) {
-            transcriptionText.textContent = data.transcription;
-            transcriptionBox.style.display = "block"; // Show transcription box
+        if (response.ok) {
+            resultOutput.textContent = data.result || "No fact-check result available.";
+            if (data.audio_result) {
+                audioPlayer.src = `data:audio/mp3;base64,${data.audio_result}`;
+                audioPlayer.style.display = "block";
+                audioPlayer.play();
+            }
         } else {
-            transcriptionText.textContent = "(No transcription)";
-            transcriptionBox.style.display = "block";
+            resultOutput.textContent = `Error: ${data.error || "Unknown error"}`;
+            showMessageBox(`Error: ${data.error || "Unknown error"}`);
         }
-        resultOutput.textContent = data.result || data.error || "Unknown error";
-
-        // Play the audio result if available
-        if (data.audio_result) {
-            playBase64Audio(data.audio_result);
-        } else if (data.error) {
-            showMessageBox(`Error: ${data.error}`);
-        }
-
     } catch (err) {
-        console.error("Audio upload error:", err);
-        if (err.name === 'AbortError') {
-            resultOutput.textContent = "Audio upload timed out. Please try again.";
-        } else {
-            resultOutput.textContent = "Unable to process audio. Network error or server issue.";
-        }
-        showMessageBox("Failed to process audio. Please try again.");
-    } finally {
         loadingSpinner.style.display = "none";
+        console.error("Submit text error:", err);
+        resultOutput.textContent = "Failed to fact-check text. Network error or server issue.";
+        showMessageBox("Failed to fact-check text. Please try again.");
     }
 }
 
-// AUDIO RECORDING SETUP
-let mediaRecorder;
-let audioChunks = [];
-let isRecording = false;
-
-async function toggleRecording() {
-    if (!isRecording) {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            mediaRecorder = new MediaRecorder(stream);
-            audioChunks = [];
-
-            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-
-            mediaRecorder.onstop = async () => {
-                const blob = new Blob(audioChunks, { type: "audio/webm" });
-                audioPlayer.src = URL.createObjectURL(blob);
-                audioPlayer.style.display = "block"; // Show the audio player
-
-                const formData = new FormData();
-                formData.append("file", blob, "recording.webm");
-
-                resultOutput.textContent = "Processing recording...";
-                loadingSpinner.style.display = "inline-block";
-                transcriptionBox.style.display = "none"; // Hide transcription box initially
-
-                try {
-                    const response = await fetch(`${BASE_URL}/factcheck/audio`, {
-                        method: "POST",
-                        body: formData,
-                    });
-                    const data = await response.json();
-                    if (data.transcription) {
-                        transcriptionText.textContent = data.transcription;
-                        transcriptionBox.style.display = "block"; // Show transcription box
-                    } else {
-                        transcriptionText.textContent = "(No transcription)";
-                        transcriptionBox.style.display = "block";
-                    }
-                    resultOutput.textContent = data.result || data.error || "Unknown error";
-
-                    // Play the audio result if available
-                    if (data.audio_result) {
-                        playBase64Audio(data.audio_result);
-                    } else if (data.error) {
-                        showMessageBox(`Error: ${data.error}`);
-                    }
-
-                } catch (err) {
-                    console.error("Recorded audio processing error:", err);
-                    resultOutput.textContent = "Unable to process recorded audio. Network error or server issue.";
-                    showMessageBox("Failed to process recorded audio. Please try again.");
-                } finally {
-                    loadingSpinner.style.display = "none";
-                }
-            };
-
-            mediaRecorder.start();
-            isRecording = true;
-            recordBtn.textContent = "⏹";
-            recordLabel.textContent = "Stop recording";
-        } catch (err) {
-            console.error("Error accessing microphone:", err);
-            showMessageBox("Could not access microphone. Please ensure it's connected and permissions are granted.");
-        }
-    } else {
-        mediaRecorder.stop();
-        isRecording = false;
-        recordBtn.textContent = "🎤";
-        recordLabel.textContent = "Click to start recording";
-    }
+function removeImageFile() {
+    const imageInput = document.getElementById("imageInput");
+    imageInput.value = ""; // Clear the selected file
 }
 
-function removeAudioFile() {
-    document.getElementById("audioInput").value = "";
-    audioPlayer.style.display = "none";
-    audioPlayer.src = ""; // Clear the audio source
-    transcriptionText.textContent = "(No transcription yet)";
-    transcriptionBox.style.display = "none";
-    resultOutput.textContent = "Fact checked results will appear here...";
-}
-
-// IMAGE FACT CHECKING
 async function uploadImage() {
-    const fileInput = document.getElementById("imageInput");
-    const caption = document.getElementById("captionInput").value;
-    const file = fileInput.files[0];
+    const imageInput = document.getElementById("imageInput");
+    const captionInput = document.getElementById("captionInput");
+    const imageFile = imageInput.files[0];
+    const caption = captionInput.value;
 
-    if (!file) {
-        showMessageBox("Please select an image first.");
+    if (!imageFile) {
+        showMessageBox("Please select an image to upload.");
         return;
     }
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("caption", caption);
+    loadingSpinner.style.display = "block";
+    resultOutput.textContent = "Fact checked results will appear here...";
+    audioPlayer.style.display = "none";
 
-    resultOutput.textContent = "Checking image...";
-    loadingSpinner.style.display = "inline-block";
+    const formData = new FormData();
+    formData.append("file", imageFile);
+    if (caption.trim()) {
+        formData.append("caption", caption);
+    }
 
     try {
         const response = await fetch(`${BASE_URL}/factcheck/image`, {
@@ -245,146 +200,185 @@ async function uploadImage() {
         });
 
         const data = await response.json();
-        resultOutput.textContent = data.result || data.error || "Unknown error";
-
-        // Play the audio result if available
-        if (data.audio_result) {
-            playBase64Audio(data.audio_result);
-        } else if (data.error) {
-            showMessageBox(`Error: ${data.error}`);
-        }
-
-    } catch (err) {
-        console.error("Image upload error:", err);
-        resultOutput.textContent = "Unable to process image. Network error or server issue.";
-        showMessageBox("Failed to process image. Please try again.");
-    } finally {
         loadingSpinner.style.display = "none";
+
+        if (response.ok) {
+            resultOutput.textContent = data.result || "No fact-check result available.";
+            if (data.audio_result) {
+                audioPlayer.src = `data:audio/mp3;base64,${data.audio_result}`;
+                audioPlayer.style.display = "block";
+                audioPlayer.play();
+            }
+        } else {
+            resultOutput.textContent = `Error: ${data.error || "Unknown error"}`;
+            showMessageBox(`Error: ${data.error || "Unknown error"}`);
+        }
+    } catch (err) {
+        loadingSpinner.style.display = "none";
+        console.error("Upload image error:", err);
+        resultOutput.textContent = "Failed to fact-check image. Network error or server issue.";
+        showMessageBox("Failed to fact-check image. Please try again.");
     }
 }
 
-function removeImageFile() {
-    document.getElementById("imageInput").value = "";
-    // If you had an image preview, you'd clear it here
-    resultOutput.textContent = "Fact checked results will appear here...";
-    // Stop any playing audio when removing the image
-    if (audioPlayer) {
-        audioPlayer.pause();
-        audioPlayer.src = "";
-        audioPlayer.style.display = "none";
-    }
-}
+// --- NEWS FEED FUNCTIONS ---
 
-// Helper function to play base64 audio
-function playBase64Audio(base64Audio) {
+// NEW: Function to load and display news source buttons
+async function loadNewsSources() {
     try {
-        // Ensure the audio player is visible if it was hidden
-        audioPlayer.style.display = "block";
-        audioPlayer.src = "data:audio/mp3;base64," + base64Audio;
-        audioPlayer.play().catch(e => console.error("Audio playback error:", e));
-    } catch (e) {
-        console.error("Failed to create audio object:", e);
+        const response = await fetch(`${BASE_URL}/news/sources`);
+        const data = await response.json();
+
+        if (response.ok) {
+            newsSourceButtonsContainer.innerHTML = ''; // Clear existing buttons
+            if (data.sources && data.sources.length > 0) {
+                data.sources.forEach(source => {
+                    const sourceButton = document.createElement('button');
+                    sourceButton.className = 'source-button';
+                    sourceButton.textContent = source.name;
+                    sourceButton.dataset.sourceId = source.id; // Store source ID
+                    sourceButton.title = source.url; // Show URL on hover
+
+                    // Set active class if this is the currently active source
+                    if (activeSourceId === source.id) {
+                        sourceButton.classList.add('active');
+                    }
+
+                    sourceButton.onclick = () => {
+                        // NEW: Set active source and fetch articles for it
+                        activeSourceId = source.id;
+                        currentPage = 0; // Reset pagination
+                        fetchNewsArticles(activeSourceId, false); // Fetch and replace
+                        // Remove 'active' from all and add to clicked
+                        document.querySelectorAll('.source-button').forEach(btn => btn.classList.remove('active'));
+                        sourceButton.classList.add('active');
+                    };
+
+                    const removeButton = document.createElement('span');
+                    removeButton.className = 'remove-source-btn';
+                    removeButton.innerHTML = '&times;'; // 'x' icon
+                    removeButton.title = 'Remove source';
+                    removeButton.onclick = (event) => {
+                        event.stopPropagation(); // Prevent button click event from firing
+                        removeNewsSource(source.id);
+                    };
+
+                    const buttonWrapper = document.createElement('div');
+                    buttonWrapper.className = 'source-button-wrapper';
+                    buttonWrapper.appendChild(sourceButton);
+                    buttonWrapper.appendChild(removeButton);
+
+                    newsSourceButtonsContainer.appendChild(buttonWrapper);
+                });
+            } else {
+                // Optionally display a message if no sources are added
+            }
+        } else {
+            showMessageBox(`Error fetching sources: ${data.error || "Unknown error"}`);
+        }
+    } catch (err) {
+        console.error("Fetch news sources error:", err);
+        showMessageBox("Failed to load news sources. Please try again.");
     }
 }
 
-// Custom message box function (replaces alert())
-function showMessageBox(message) {
-    // A simple, non-blocking way to show messages.
-    // For a more robust solution, you'd create a proper modal dialog.
-    const messageBox = document.createElement('div');
-    messageBox.style.cssText = `
-        position: fixed;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background-color: rgba(0, 0, 0, 0.8);
-        color: white;
-        padding: 15px 25px;
-        border-radius: 8px;
-        z-index: 1000;
-        font-family: 'Segoe UI', sans-serif;
-        font-size: 1rem;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.5);
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    `;
-    messageBox.innerHTML = `<span>${message}</span>`;
-    document.body.appendChild(messageBox);
-
-    setTimeout(() => {
-        messageBox.remove();
-    }, 3000); // Message disappears after 3 seconds
-}
-
-
-// NEWS FEED FUNCTIONALITY
-// Function to add a news source
+// NEW: Function to add a news source
 async function addNewsSource() {
     const rssUrl = rssUrlInput.value.trim();
     const sourceName = sourceNameInput.value.trim();
 
     if (!rssUrl || !sourceName) {
-        showMessageBox("Please enter both a URL/RSS feed and a source name.");
+        showMessageBox("Please enter both URL and Source Name.");
         return;
     }
-
-    // Basic URL validation
-    try {
-        new URL(rssUrl);
-    } catch (e) {
-        showMessageBox("Please enter a valid URL.");
-        return;
-    }
-
-    addSourceBtn.textContent = "Adding...";
-    addSourceBtn.disabled = true;
 
     try {
         const response = await fetch(`${BASE_URL}/news/add_source`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+                "Content-Type": "application/json",
+            },
             body: JSON.stringify({ url: rssUrl, name: sourceName }),
         });
 
         const data = await response.json();
 
         if (response.ok) {
-            showMessageBox("News source added successfully!");
-            rssUrlInput.value = ""; // Clear input fields
-            sourceNameInput.value = "";
-            fetchNewsArticles(); // Refresh articles after adding a new source
+            showMessageBox("Source added successfully!");
+            rssUrlInput.value = '';
+            sourceNameInput.value = '';
+            loadNewsSources(); // Reload sources to display the new button
+            // Optionally, select the newly added source and load its articles
+            activeSourceId = data.id;
+            currentPage = 0;
+            fetchNewsArticles(activeSourceId, false);
         } else {
-            showMessageBox(`Failed to add source: ${data.error || "Unknown error"}`);
+            showMessageBox(`Error adding source: ${data.error || "Unknown error"}`);
         }
     } catch (err) {
         console.error("Add news source error:", err);
-        showMessageBox("Failed to connect to the server to add news source. Please try again.");
-    } finally {
-        addSourceBtn.textContent = "Add Source";
-        addSourceBtn.disabled = false;
+        showMessageBox("Failed to add news source. Please try again.");
     }
 }
 
-// Function to fetch and display news articles
-async function fetchNewsArticles() {
-    // Check if articlesList element exists before trying to modify it
-    if (!articlesList) {
-        console.warn("articlesList element not found. News feed functionality might not display correctly.");
+// NEW: Function to remove a news source
+async function removeNewsSource(sourceId) {
+    if (!confirm('Are you sure you want to remove this news source?')) {
         return;
     }
 
-    articlesList.innerHTML = '<li>Loading news articles...</li>'; // Show loading state
-
     try {
-        const response = await fetch(`${BASE_URL}/news/articles`);
+        const response = await fetch(`${BASE_URL}/news/remove_source`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ source_id: sourceId }),
+        });
+
         const data = await response.json();
 
-        if (response.ok && data.articles) {
-            if (data.articles.length === 0) {
-                articlesList.innerHTML = '<li>No news articles found. Add RSS feeds or website URLs above.</li>';
-            } else {
-                articlesList.innerHTML = ''; // Clear previous articles
+        if (response.ok) {
+            showMessageBox("Source removed successfully!");
+            loadNewsSources(); // Reload sources
+            // If the removed source was active, clear articles and reset activeSourceId
+            if (activeSourceId === sourceId) {
+                activeSourceId = null;
+                currentPage = 0;
+                articlesList.innerHTML = '<li>Select a news source or add a new one.</li>';
+                loadMoreBtn.style.display = 'none';
+            }
+        } else {
+            showMessageBox(`Error removing source: ${data.error || "Unknown error"}`);
+        }
+    } catch (err) {
+        console.error("Remove news source error:", err);
+        showMessageBox("Failed to remove news source. Please try again.");
+    }
+}
+
+
+// Modified: Function to fetch news articles with pagination and source filter
+async function fetchNewsArticles(sourceId = null, append = false) {
+    loadingSpinner.style.display = "block"; // Show loading spinner for articles as well
+
+    if (!append) {
+        articlesList.innerHTML = ''; // Clear articles only if not appending
+        currentPage = 0; // Reset page if new filter or not appending
+    }
+
+    let url = `${BASE_URL}/news/articles?limit=${articlesPerPage}&offset=${currentPage * articlesPerPage}`;
+    if (sourceId) {
+        url += `&source_id=${sourceId}`;
+    }
+
+    try {
+        const response = await fetch(url);
+        const data = await response.json();
+        loadingSpinner.style.display = "none";
+
+        if (response.ok) {
+            if (data.articles && data.articles.length > 0) {
                 data.articles.forEach(article => {
                     const listItem = document.createElement('li');
                     listItem.innerHTML = `
@@ -394,20 +388,44 @@ async function fetchNewsArticles() {
                     `;
                     articlesList.appendChild(listItem);
                 });
+
+                // Show/hide load more button
+                if (data.hasMore) {
+                    loadMoreBtn.style.display = 'block';
+                    currentPage++; // Increment page for next load
+                } else {
+                    loadMoreBtn.style.display = 'none';
+                }
+
+            } else if (!append) { // If no articles found and not appending
+                articlesList.innerHTML = '<li>No news articles found for this selection.</li>';
+                loadMoreBtn.style.display = 'none';
+            } else { // No more articles to append
+                loadMoreBtn.style.display = 'none';
+                showMessageBox("No more articles to load.");
             }
         } else {
             articlesList.innerHTML = `<li>Error fetching news: ${data.error || "Unknown error"}</li>`;
             showMessageBox(`Error fetching news: ${data.error || "Unknown error"}`);
+            loadMoreBtn.style.display = 'none';
         }
     } catch (err) {
+        loadingSpinner.style.display = "none";
         console.error("Fetch news articles error:", err);
         articlesList.innerHTML = '<li>Unable to load news articles. Network error or server issue.</li>';
         showMessageBox("Failed to fetch news articles. Please try again.");
+        loadMoreBtn.style.display = 'none';
     }
 }
+
+// Event listener for Load More button
+loadMoreBtn.addEventListener('click', () => {
+    fetchNewsArticles(activeSourceId, true); // Append articles for the current source
+});
 
 // Initialize the first mode and fetch news on page load
 document.addEventListener("DOMContentLoaded", () => {
     showMode('voiceMode'); // Or your preferred default mode
-    fetchNewsArticles(); // Fetch news when the page loads
+    loadNewsSources(); // Load news source buttons on page load
+    fetchNewsArticles(); // Fetch all news when the page loads initially
 });

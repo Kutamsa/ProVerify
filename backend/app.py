@@ -6,10 +6,10 @@ import mimetypes
 import imghdr
 from pydub import AudioSegment
 from google.cloud import texttospeech
-from fastapi import FastAPI, UploadFile, File, Form, Request, Response, status
+from fastapi import FastAPI, UploadFile, File, Form, Request, Response, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles # NEW IMPORT
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -19,7 +19,6 @@ import httpx
 from . import telegram_bot_handlers
 from telegram import Update
 
-# NEW IMPORTS for News Feed (PostgreSQL)
 import psycopg2
 import psycopg2.extras
 from urllib.parse import urlparse
@@ -28,7 +27,7 @@ import feedparser
 
 load_dotenv()
 
-# --- Load Environment Variables using standard underscore naming ---
+# --- Load Environment Variables ---
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -55,14 +54,11 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY)
 tts_client = None
 
 # --- Determine the path to the 'frontend' directory ---
-# This correctly navigates from app.py (inside backend/) up to the project root,
-# and then down into the frontend/ directory.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__)) # This is /opt/render/project/src/backend/
-PROJECT_ROOT = os.path.join(BASE_DIR, "..")          # This is /opt/render/project/src/
-FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend") # This is /opt/render/project/src/frontend/
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.join(BASE_DIR, "..")
+FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
-# Mount static files (CSS, JS, images, etc.) from the 'frontend' directory
-# These files will be served at paths starting with /static/
+# Mount static files (CSS, JS, images) from the 'frontend' directory under the /static path
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 @app.on_event("startup")
@@ -96,9 +92,9 @@ async def text_to_speech(text: str) -> bytes:
         return b""
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
-        language_code="en-US",
-        name="en-US-Standard-C",
-        ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+         language_code="te-IN",
+        name="te-IN-Chirp3-HD-Achird",
+        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
@@ -247,6 +243,9 @@ class AddSourceRequest(BaseModel):
     url: str
     name: str
 
+class RemoveSourceRequest(BaseModel):
+    source_id: int # Changed to int for ID-based deletion
+
 def get_news_db_connection():
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL environment variable not set. News Feed functionality will not work without a database connection.")
@@ -292,69 +291,111 @@ def init_news_db():
     except Exception as e:
         raise RuntimeError(f"Failed to initialize PostgreSQL database: {e}")
 
-@app.on_event("startup")
-async def startup_event_handler():
-    await startup_event()
-
 @app.post("/news/add_source")
 async def add_news_source(source_data: AddSourceRequest):
     try:
         with get_news_db_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("INSERT INTO sources (url, name) VALUES (%s, %s)", (source_data.url, source_data.name))
+            cursor.execute("INSERT INTO sources (url, name) VALUES (%s, %s) RETURNING id", (source_data.url, source_data.name))
+            source_id = cursor.fetchone()[0]
             conn.commit()
-        return JSONResponse(content={"message": "News source added successfully!"}, status_code=200)
+        return JSONResponse(content={"message": "News source added successfully!", "id": source_id, "name": source_data.name, "url": source_data.url}, status_code=200)
     except psycopg2.errors.UniqueViolation:
         return JSONResponse(content={"error": "This news source URL already exists."}, status_code=409)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to add news source: {e}"})
 
-@app.get("/news/articles")
-async def get_news_articles():
-    all_articles = []
+@app.post("/news/remove_source")
+async def remove_news_source(remove_data: RemoveSourceRequest):
+    try:
+        with get_news_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM sources WHERE id = %s", (remove_data.source_id,))
+            conn.commit()
+            if cursor.rowcount == 0:
+                return JSONResponse(content={"error": "News source not found."}, status_code=404)
+        return JSONResponse(content={"message": "News source removed successfully!"}, status_code=200)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to remove news source: {e}"})
+
+@app.get("/news/sources")
+async def get_news_sources():
     try:
         with get_news_db_connection() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("SELECT id, url, name FROM sources")
+                cur.execute("SELECT id, url, name FROM sources ORDER BY name")
                 sources = cur.fetchall()
+                return JSONResponse(content={"sources": sources}, status_code=200)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch news sources: {e}"})
 
-                for source in sources:
+
+@app.get("/news/articles")
+async def get_news_articles(
+    source_id: int = Query(None, description="Optional: Filter articles by source ID"),
+    limit: int = Query(10, ge=1, description="Number of articles to return"),
+    offset: int = Query(0, ge=0, description="Number of articles to skip")
+):
+    all_articles = []
+    has_more = False
+    try:
+        with get_news_db_connection() as conn:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                sources_to_fetch = []
+                if source_id:
+                    cur.execute("SELECT id, url, name FROM sources WHERE id = %s", (source_id,))
+                    source_data = cur.fetchone()
+                    if source_data:
+                        sources_to_fetch.append(source_data)
+                    else:
+                        return JSONResponse(content={"articles": [], "hasMore": False}, status_code=200)
+                else:
+                    cur.execute("SELECT id, url, name FROM sources")
+                    sources_to_fetch = cur.fetchall()
+
+                for source in sources_to_fetch:
                     source_id = source['id']
                     source_name = source['name']
                     source_url = source['url']
 
+                    # Check for recently cached articles for this source
                     one_hour_ago = datetime.now() - timedelta(hours=1)
                     cur.execute(
-                        "SELECT title, link, pub_date FROM articles WHERE source_id = %s AND fetched_at > %s",
-                        (source_id, one_hour_ago.isoformat())
+                        "SELECT title, link, pub_date FROM articles WHERE source_id = %s AND fetched_at > %s ORDER BY pub_date DESC LIMIT %s OFFSET %s",
+                        (source_id, one_hour_ago.isoformat(), limit + 1, offset) # Fetch one extra to check for 'hasMore'
                     )
                     cached_articles = cur.fetchall()
 
                     if cached_articles:
-                        for article in cached_articles:
+                        for article in cached_articles[:limit]:
                             all_articles.append({
                                 "title": article['title'],
                                 "link": article['link'],
                                 "source": source_name,
                                 "pubDate": article['pub_date']
                             })
+                        has_more = len(cached_articles) > limit
                         continue
 
+                    # If no fresh cache, fetch from RSS feed
                     feed = feedparser.parse(source_url)
                     if feed.bozo:
-                        pass
+                        # Log parsing errors if needed: print(f"Bozo bit set for {source_url}: {feed.bozo_exception}")
+                        pass # Continue even if feed is malformed
 
                     if not feed.entries:
-                        all_articles.append({
-                            "title": f"No articles available from {source_name}",
-                            "link": "#",
-                            "source": source_name,
-                            "pubDate": None
-                        })
+                        # Do not add "No articles available" entry if filtering by source and no articles found
+                        if not source_id: # Only add if showing all sources
+                            all_articles.append({
+                                "title": f"No articles available from {source_name}",
+                                "link": "#",
+                                "source": source_name,
+                                "pubDate": None
+                            })
                         continue
 
+                    # Clear old articles for this source and insert new ones
                     cur.execute("DELETE FROM articles WHERE source_id = %s", (source_id,))
-
                     for entry in feed.entries:
                         title = entry.title
                         link = entry.link
@@ -366,23 +407,46 @@ async def get_news_articles():
                                 pass
                         if not pub_date_str:
                             pub_date_str = getattr(entry, 'published', getattr(entry, 'updated', None))
-                        all_articles.append({
-                            "title": title,
-                            "link": link,
-                            "source": source_name,
-                            "pubDate": pub_date_str
-                        })
+
                         try:
                             cur.execute("INSERT INTO articles (source_id, title, link, pub_date, fetched_at) VALUES (%s, %s, %s, %s, %s)",
                                         (source_id, title, link, pub_date_str, datetime.now().isoformat()))
                             conn.commit()
                         except psycopg2.errors.UniqueViolation:
+                            conn.rollback() # Rollback if link already exists (e.g., duplicate entry in feed)
+                        except Exception as insert_e:
                             conn.rollback()
-                        except Exception:
-                            conn.rollback()
+                            print(f"Error inserting article from {source_name}: {insert_e}")
 
-            all_articles.sort(key=lambda x: datetime.fromisoformat(x['pubDate'].replace('Z', '')) if x['pubDate'] else datetime.min, reverse=True)
-            return JSONResponse(content={"articles": all_articles}, status_code=200)
+                # After fetching/caching, retrieve the paginated results for the requested source
+                if source_id: # If a specific source was requested, query only its articles
+                    cur.execute(
+                        "SELECT title, link, pub_date FROM articles WHERE source_id = %s ORDER BY pub_date DESC LIMIT %s OFFSET %s",
+                        (source_id, limit + 1, offset) # Fetch one extra to check for 'hasMore'
+                    )
+                else: # If all sources were requested, combine and paginate
+                    # This logic assumes that for "all articles", we just show the latest 10 across all sources
+                    # If articles need to be grouped by source and then paginated per source, the logic needs adjustment.
+                    # For simplicity, sorting all and then paginating
+                    cur.execute(
+                        "SELECT a.title, a.link, a.pub_date, s.name as source_name FROM articles a JOIN sources s ON a.source_id = s.id ORDER BY a.pub_date DESC LIMIT %s OFFSET %s",
+                        (limit + 1, offset)
+                    )
+                
+                final_articles_raw = cur.fetchall()
+                has_more = len(final_articles_raw) > limit
+
+                for article in final_articles_raw[:limit]:
+                    all_articles.append({
+                        "title": article['title'],
+                        "link": article['link'],
+                        "source": article['source_name'] if 'source_name' in article else source_name, # Use joined source_name if available
+                        "pubDate": article['pub_date']
+                    })
+
+        all_articles.sort(key=lambda x: datetime.fromisoformat(x['pubDate'].replace('Z', '')) if x['pubDate'] else datetime.min, reverse=True)
+
+        return JSONResponse(content={"articles": all_articles, "hasMore": has_more}, status_code=200)
 
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to fetch news articles: {e}"})

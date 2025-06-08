@@ -3,6 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Verify It</title>
     <link rel="stylesheet" href="/static/style.css" />
     <script src="/static/script.js" defer></script>
@@ -12,7 +13,7 @@
 <body>
     <div class="header-full">
         <h1 class="main-title">🔍Verifyit </h1>
-        <p class="subtitle"> Fact-Checking Made Simple</p>
+        <p class="subtitle">Fact-Checking Made Simple</p>
     </div>
 
     <div class="layout two-panel">
@@ -32,16 +33,14 @@
                         <div id="recordLabel" class="record-label">Click to start recording</div>
                     </div>
 
-                    <audio id="player" controls style="display:none; margin-top: 10px;"></audio>
-                    <div class="file-row">
-                        <input type="file" id="audioInput" accept="audio/*">
-                        <span class="trash-icon" onclick="removeAudioFile()">🗑️</span>
-                    </div>
-                    <button onclick="uploadAudio()">Fact Check</button>
+                    <audio id="player" controls style="display:none;"></audio>
+
                     <div id="transcriptionBox" class="result-text" style="display: none;">
                         <h3>🗣️ Transcription</h3>
                         <p id="transcriptionText">(No transcription yet)</p>
                     </div>
+
+
                 </div>
 
                 <div id="textMode" class="mode-section" style="display:none;">
@@ -57,6 +56,7 @@
                     <input type="text" id="captionInput" placeholder="Enter a caption or question...">
                     <button onclick="uploadImage()">Fact Check</button>
                 </div>
+
 
                 <div id="loadingSpinner" style="display:none;">⏳ Loading...</div>
 
@@ -79,11 +79,17 @@
                     <button id="addSourceBtn" onclick="addNewsSource()">Add Source</button>
                 </div>
 
+                <div id="newsSourceButtonsContainer" class="news-source-buttons-container">
+                </div>
+
                 <div id="newsArticlesContainer" class="result-text news-articles-container">
                     <h3>Recent Articles</h3>
                     <ul id="articlesList">
                         <li>No news sources added yet. Add RSS feeds or website URLs above.</li>
                     </ul>
+                    <div id="loadMoreContainer" style="text-align: center; margin-top: 15px;">
+                        <button id="loadMoreBtn" class="load-more-btn" style="display:none;">Load More</button>
+                    </div>
                 </div>
             </div>
         </div>
