@@ -214,21 +214,26 @@ async def startup_event():
     if TELEGRAM_BOT_TOKEN:
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
         
-        webhook_url = os.getenv("RENDER_EXTERNAL_HOSTNAME")
-        if webhook_url:
-            full_webhook_url = f"https://{webhook_url}/telegram-webhook"
+        # FIX: Use RENDER_SERVICE_URL for the full URL directly
+        webhook_base_url = os.getenv("RENDER_SERVICE_URL")
+        
+        if webhook_base_url:
+            full_webhook_url = f"{webhook_base_url}/telegram-webhook"
             print(f"Setting Telegram webhook to: {full_webhook_url}")
-            await telegram_application.bot.set_webhook(url=full_webhook_url)
-            print("Telegram webhook set successfully.")
+            try:
+                await telegram_application.bot.set_webhook(url=full_webhook_url)
+                print("Telegram webhook set successfully.")
+            except Exception as webhook_e:
+                print(f"Error setting Telegram webhook: {webhook_e}")
         else:
-            print("RENDER_EXTERNAL_HOSTNAME not found. Webhook not set for production. Running in local polling mode (if __name__ is called).")
+            print("RENDER_SERVICE_URL not found. Webhook not set for production. Running in local polling mode (if __name__ is called).")
     else:
         print("TELEGRAM_BOT_TOKEN not found. Telegram bot functionality will not be active.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Remove the webhook for the Telegram bot when the FastAPI app shuts down."""
-    if telegram_application and os.getenv("RENDER_EXTERNAL_HOSTNAME"):
+    if telegram_application and os.getenv("RENDER_SERVICE_URL"): # Changed from RENDER_EXTERNAL_HOSTNAME
         print("Removing Telegram webhook...")
         await telegram_application.bot.delete_webhook()
         print("Telegram webhook removed.")
@@ -242,7 +247,7 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         req_json = await request.json()
-        # FIX: Correctly parse the JSON into an Update object
+        # Ensure Update is imported from telegram in app.py directly
         update = Update.de_json(req_json, telegram_application.bot)
         
         if update: # Check if update object is valid
@@ -255,9 +260,9 @@ async def telegram_webhook(request: Request) -> Response:
 # --- Main execution block ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    # When running locally via `python app.py` and no RENDER_EXTERNAL_HOSTNAME,
+    # When running locally via `python app.py` and no RENDER_SERVICE_URL,
     # the bot runs in polling mode. Otherwise, Uvicorn runs for the web app and webhook.
-    if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_EXTERNAL_HOSTNAME"):
+    if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"): # Changed from RENDER_EXTERNAL_HOSTNAME
         print("Running Telegram bot in local polling mode...")
         # This will block, so it's typically for local development
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
