@@ -2,7 +2,7 @@ import os
 import io
 import base64
 import tempfile
-import mimetypes # <--- NEW: Import mimetypes for inferring MIME types
+import mimetypes 
 from pydub import AudioSegment
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -73,7 +73,7 @@ Instructions:
     ]
     ai_response = _openai_client.chat.completions.create(
         model="o4-mini", # Model is set to o4-mini
-        temperature=0.2,
+        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
         messages=messages # Using the new messages list
     )
     fact_check_result = ai_response.choices[0].message.content
@@ -125,7 +125,7 @@ Instructions:
 
     ai_response = _openai_client.chat.completions.create(
         model="o4-mini", # Model is set to o4-mini
-        temperature=0.2,
+        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
         messages=messages # Using the new messages list
     )
     fact_check_result = ai_response.choices[0].message.content
@@ -240,13 +240,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             caption = message.caption if message.caption else ""
 
-            # --- FIX: Dynamically determine MIME type for image uploads ---
+            # --- Dynamically determine MIME type for image uploads ---
             _, file_extension = os.path.splitext(photo_file.file_path)
             inferred_mime_type, _ = mimetypes.guess_type(f"dummy{file_extension}")
             # Fallback to image/jpeg if inference fails or it's not an image type
             mime_type = inferred_mime_type if inferred_mime_type and inferred_mime_type.startswith('image/') else "image/jpeg"
-            print(f"Inferred MIME type for image: {mime_type}") # For debugging
-            # --- END FIX ---
+            print(f"Inferred MIME type for image from Telegram: {mime_type}") # For debugging
+            # --- End MIME type determination ---
 
             # The perform_image_factcheck_func (from app.py) already has the desired prompt structure
             response = await _perform_image_factcheck_function(bytes(photo_bytes), mime_type, caption)

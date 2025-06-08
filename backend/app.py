@@ -128,7 +128,7 @@ Instructions:
 
     ai_response = client.chat.completions.create(
         model="o4-mini",
-        temperature=0.2,
+        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
         messages=messages
     )
 
@@ -180,7 +180,7 @@ Instructions:
 
     ai_response = client.chat.completions.create(
         model="o4-mini",
-        temperature=0.2,
+        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
         messages=messages
     )
 
@@ -189,7 +189,6 @@ Instructions:
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
 async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
-    print(f"DEBUG: Received MIME type in perform_image_factcheck: {mime_type}")
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     messages = [
         {
@@ -213,7 +212,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
                 {"type": "text", "text": f"Please fact-check this image. Context: {caption}" if caption else "Please fact-check this image."},
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{b64_image}"} # FIXED: Using dynamic mime_type from file
+                    "image_url": {"url": f"data:{mime_type};base64,{b64_image}"} # Fixed previously
                 }
             ],
         }
@@ -221,6 +220,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
 
     response = client.chat.completions.create(
         model="o4-mini",
+        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
         messages=messages,
         max_tokens=500
     )
@@ -259,7 +259,6 @@ async def factcheck_image_web(
 ):
     try:
         image_bytes = await file.read()
-        # Ensure file.content_type is used for mime_type
         response = await perform_image_factcheck(image_bytes, file.content_type, caption)
         return JSONResponse(content=response)
     except Exception as e:
@@ -294,7 +293,6 @@ async def startup_event():
 
     if TELEGRAM_BOT_TOKEN:
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-        # FIX: Call initialize() after building the application object (for webhook mode)
         await telegram_application.initialize()
         
         webhook_base_url = os.getenv("RENDER_SERVICE_URL")
@@ -317,11 +315,7 @@ async def shutdown_event():
     """Remove the webhook for the Telegram bot when the FastAPI app shuts down."""
     if telegram_application and os.getenv("RENDER_SERVICE_URL"):
         print("Removing Telegram webhook...")
-        # FIX: Call shutdown() on the application for proper cleanup
         await telegram_application.shutdown()
-        # In a webhook setup, delete_webhook is typically done via set_webhook(url='')
-        # but calling application.shutdown() handles webhook cleanup if it was started by the app.
-        # Alternatively, can explicitly call: await telegram_application.bot.set_webhook(url='')
         print("Telegram webhook removed (via application shutdown).")
 
 # --- TELEGRAM WEBHOOK ENDPOINT ---
@@ -348,14 +342,12 @@ if __name__ == "__main__":
     if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"):
         print("Running Telegram bot in local polling mode...")
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-        # REMOVED: await telegram_application.initialize() here, as run_polling() handles it
         telegram_bot_handlers.initialize_bot_components(
             openai_client_instance=client,
             tts_func=text_to_speech,
             authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
             perform_image_factcheck_func=perform_image_factcheck
         )
-        # Note: run_polling is blocking, so uvicorn.run will not be reached here
         telegram_application.run_polling(poll_interval=1)
     else:
         print("Running Uvicorn server for web app and webhook endpoint...")
