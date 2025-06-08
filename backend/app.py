@@ -341,6 +341,8 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
                         citations.append(citation['uri'])
         else:
             print(f"DEBUG: Unexpected Gemini response structure for website image: {gemini_result}")
+            # Consider raising an error here if unexpected structure is a critical failure
+            # For now, just log and continue with "No result text found."
 
         print("DEBUG: Gemini request successful (Website)")
         
@@ -349,11 +351,20 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
 
         return {"result": fact_check_result, "audio_result": audio_base64, "sources": citations}
     except httpx.HTTPStatusError as e:
-        print(f"Error calling Gemini API for website image (HTTP Error): {e.response.status_code} - {e.response.text}")
-        raise ValueError(f"Gemini API HTTP Error (Website): {e.response.status_code} - {e.response.text}")
+        # This covers 4xx/5xx HTTP errors from Gemini API
+        error_message = f"Gemini API HTTP Error (Website): Status {e.response.status_code}, Response: {e.response.text}"
+        print(f"Error: {error_message}") # Detailed error printed to logs
+        raise ValueError(error_message) # Re-raise as ValueError for FastAPI to catch
+    except json.JSONDecodeError as e:
+        # This catches errors if gemini_response.json() fails
+        error_message = f"Failed to parse Gemini API response as JSON: {e}"
+        print(f"Error: {error_message}")
+        raise ValueError(error_message)
     except Exception as e:
-        print(f"Error calling Gemini API for website image: {e}")
-        raise 
+        # This is a generic catch-all for other exceptions
+        error_message = f"An unexpected error occurred during Gemini image processing: {type(e).__name__}: {e}"
+        print(f"Error: {error_message}", exc_info=True) # Print full traceback
+        raise ValueError(error_message) # Re-raise as ValueError for FastAPI to catch
 
 
 # --- WEB APP ENDPOINTS ---
@@ -542,4 +553,3 @@ if __name__ == "__main__":
     else:
         print("Running Uvicorn server for web app and webhook endpoint...")
         uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
-

@@ -1,5 +1,5 @@
 // DOM Elements
-const resultOutput = document.getElementById("resultOutput"); // This is the <p> tag inside resultBox
+const resultOutput = document.getElementById("resultOutput");
 const transcriptionBox = document.getElementById("transcriptionBox");
 const transcriptionText = document.getElementById("transcriptionText"); // Get the p element
 const loadingSpinner = document.getElementById("loadingSpinner");
@@ -17,17 +17,9 @@ function showMode(modeId) {
     modes.forEach(mode => {
         document.getElementById(mode).style.display = (mode === modeId) ? "block" : "none";
     });
-    // Reset all outputs when changing mode
     resultOutput.textContent = "Fact checked results will appear here..."; // Reset result text
     transcriptionText.textContent = "(No transcription yet)"; // Reset transcription text
     transcriptionBox.style.display = "none"; // Hide transcription box initially
-
-    // Clear and hide image-specific output elements
-    const imageSourcesDisplay = document.getElementById("imageSourcesDisplay");
-    if (imageSourcesDisplay) {
-        imageSourcesDisplay.innerHTML = '';
-        imageSourcesDisplay.style.display = 'none';
-    }
 }
 
 // TEXT FACT CHECKING
@@ -230,14 +222,6 @@ async function uploadImage() {
     resultOutput.textContent = "Checking image...";
     loadingSpinner.style.display = "inline-block";
 
-    // Clear previous sources display
-    const imageSourcesDisplay = document.getElementById("imageSourcesDisplay");
-    if (imageSourcesDisplay) {
-        imageSourcesDisplay.innerHTML = '';
-        imageSourcesDisplay.style.display = 'none'; // Hide it initially
-    }
-
-
     try {
         const response = await fetch(`${BASE_URL}/factcheck/image`, {
             method: "POST",
@@ -248,35 +232,6 @@ async function uploadImage() {
         resultOutput.textContent = data.result || data.error || "Unknown error";
         if (data.error) {
             showMessageBox(`Error: ${data.error}`);
-        } else {
-            // Play the audio result if available
-            if (data.audio_result) {
-                playBase64Audio(data.audio_result);
-            }
-
-            // Display sources if available
-            if (data.sources && data.sources.length > 0 && imageSourcesDisplay) {
-                imageSourcesDisplay.style.display = 'block'; // Show the sources div
-                const sourcesTitle = document.createElement('h4');
-                sourcesTitle.className = 'mt-4 font-semibold text-gray-700'; // Add Tailwind classes if needed
-                sourcesTitle.textContent = "Sources:";
-                imageSourcesDisplay.appendChild(sourcesTitle);
-
-                const ul = document.createElement('ul');
-                ul.className = 'list-disc list-inside space-y-1'; // Tailwind classes for styling list
-                data.sources.forEach(source => {
-                    const li = document.createElement('li');
-                    const a = document.createElement('a');
-                    a.href = source;
-                    a.textContent = source;
-                    a.target = "_blank"; // Open in new tab
-                    a.rel = "noopener noreferrer"; // Security best practice
-                    a.className = 'text-blue-600 hover:underline'; // Tailwind classes for link styling
-                    li.appendChild(a);
-                    ul.appendChild(li);
-                });
-                imageSourcesDisplay.appendChild(ul);
-            }
         }
     } catch (err) {
         console.error("Image upload error:", err);
@@ -289,15 +244,8 @@ async function uploadImage() {
 
 function removeImageFile() {
     document.getElementById("imageInput").value = "";
-    document.getElementById("captionInput").value = ""; // Clear caption too
-    resultOutput.textContent = "Fact checked results will appear here..."; // Reset result text
-
-    // Clear and hide image-specific output elements
-    const imageSourcesDisplay = document.getElementById("imageSourcesDisplay");
-    if (imageSourcesDisplay) {
-        imageSourcesDisplay.innerHTML = '';
-        imageSourcesDisplay.style.display = 'none';
-    }
+    // If you had an image preview, you'd clear it here
+    resultOutput.textContent = "Fact checked results will appear here...";
 }
 
 // Helper function to play base64 audio
