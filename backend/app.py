@@ -14,6 +14,7 @@ import json
 
 # Import Telegram bot setup from our new module
 from . import telegram_bot_handlers # Relative import within backend package
+from telegram import Update # Import Update class directly here for de_json
 
 load_dotenv()
 
@@ -241,7 +242,9 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         req_json = await request.json()
-        update = telegram_application.bot.collect_update(req_json) # Use collect_update
+        # FIX: Correctly parse the JSON into an Update object
+        update = Update.de_json(req_json, telegram_application.bot)
+        
         if update: # Check if update object is valid
             await telegram_application.process_update(update)
         return Response(status_code=status.HTTP_200_OK)
