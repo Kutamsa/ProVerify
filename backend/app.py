@@ -18,6 +18,7 @@ import httpx # Import httpx for making asynchronous HTTP requests to Gemini
 
 # Import Telegram bot setup from our new module (relative import)
 from . import telegram_bot_handlers 
+from telegram import Update # Import Update class directly here for de_json for webhook
 
 load_dotenv()
 
@@ -25,10 +26,10 @@ load_dotenv()
 # Ensure your OPENAI_API_KEY is set in your .env file locally,
 # and as an environment variable on Render.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# Keep OpenAI client for text/audio processing AND for Telegram bot image processing
+# Keep OpenAI client for text/audio processing AND for Telegram bot's text/audio transcription
 openai_client = OpenAI(api_key=OPENAI_API_KEY) 
 
-# --- Gemini API Config (for Website Image Processing ONLY) ---
+# --- Gemini API Config ---
 # For Canvas runtime, GEMINI_API_KEY can be an empty string, as Canvas injects it.
 # For Render deployment, it MUST be read from environment variables.
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Read from environment variable
@@ -199,46 +200,12 @@ Instructions:
     audio_base64_result = text_to_speech(fact_check_result)
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
-# Function for Image Fact-Checking using OpenAI (for Telegram Bot)
-async def perform_image_factcheck_openai(image_bytes: bytes, mime_type: str, caption: str):
-    # This function will be used by the Telegram bot
-    b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    messages = [
-        {"role": "system", "content": "You are a fact-checking assistant. Provide clear and concise answers."},
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": caption or "Please fact-check this image."},
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{b64_image}"}
-                }
-            ],
-        }
-    ]
-    try:
-        print("DEBUG: Sending request to OpenAI for image processing (for Telegram)...")
-        print(f"DEBUG: Using OpenAI model 'gpt-4o' for Telegram image processing.") # Confirm model
-        response = openai_client.chat.completions.create( # Using openai_client
-            model="gpt-4o", # Keep using gpt-4o for Telegram images for now
-            messages=messages,
-            max_tokens=500
-        )
-        print("DEBUG: OpenAI image request successful (for Telegram)")
-        return {"result": response.choices[0].message.content}
-    except Exception as e:
-        print(f"Error calling OpenAI API for Telegram image: {e}")
-        if hasattr(e, 'response') and e.response:
-            print(f"OpenAI API response status (Telegram): {e.response.status_code}")
-            print(f"OpenAI API response body (Telegram): {e.response.text}")
-        raise # Re-raise to be caught by the calling handler
-
-
-# NEW Function for Image Fact-Checking using Gemini (for Website ONLY)
-async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, caption: str):
-    # This function will be used by the website's image upload
+# NEW Unified Function for Image Fact-Checking using Gemini (for Website AND Telegram)
+# Renamed from perform_image_factcheck_gemini to reflect its universal use.
+async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
+    # This function will be used by BOTH the website and the Telegram bot for image uploads
     
-    # --- Robust Image Type Inference (copied from previous logic) ---
+    # --- Robust Image Type Inference ---
     guessed_type = imghdr.what(None, h=image_bytes)
     
     mime_type_for_gemini = None 
@@ -248,7 +215,7 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
         mime_type_for_gemini = 'image/png'
     elif guessed_type == 'gif':
         mime_type_for_gemini = 'image/gif'
-    elif mime_type == 'image/webp':
+    elif mime_type == 'image/webp': # WebP needs explicit check if imghdr doesn't catch
         mime_type_for_gemini = 'image/webp'
     
     if not mime_type_for_gemini:
@@ -257,16 +224,16 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
             raise ValueError(f"Unsupported image MIME type received: {mime_type}. Allowed: {allowed_mime_types}")
         mime_type_for_gemini = mime_type
 
-    print(f"DEBUG: Original MIME type from FastAPI (Website): {mime_type}")
-    print(f"DEBUG: Inferred MIME type for Gemini (Website): {mime_type_for_gemini}")
-    print(f"DEBUG: Image bytes length (Website): {len(image_bytes)}")
+    print(f"DEBUG: Original MIME type from FastAPI (Image Fact-Check): {mime_type}")
+    print(f"DEBUG: Inferred MIME type for Gemini (Image Fact-Check): {mime_type_for_gemini}")
+    print(f"DEBUG: Image bytes length (Image Fact-Check): {len(image_bytes)}")
         
     if len(image_bytes) == 0:
         raise ValueError("Empty image data received")
     
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    print(f"DEBUG: Base64 image length (Website): {len(b64_image)}")
-    print(f"DEBUG: Base64 preview (first 50 chars - Website): {b64_image[:50]}...")
+    print(f"DEBUG: Base64 image length (Image Fact-Check): {len(b64_image)}")
+    print(f"DEBUG: Base64 preview (first 50 chars - Image Fact-Check): {b64_image[:50]}...")
     # --- End Image Type Inference ---
 
     # --- GEMINI API CALL ---
@@ -279,11 +246,9 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
             Instructions:
             - Respond in clear, simple Telugu — use English only where needed.
             - Do not respond in bullet points. Write like you're explaining it to someone directly.
-            - **Use Google Search to verify any factual claims or contexts related to the image.**
             - Analyze what you see in the image and determine if it appears authentic or manipulated.
             - If you detect signs of manipulation, explain what you notice.
             - If it appears genuine, provide context about what the image shows.
-            - **If you use external sources, provide the URLs of those sources as a numbered list at the end of your response.**
             - If it's controversial or you're uncertain, be honest about limitations.
             - Do not repeat yourself.
             - Use natural sentence flow like a real person would.
@@ -303,17 +268,13 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
                 "role": "user",
                 "parts": gemini_prompt_parts
             }
-        ],
-        "tools": [ # Add this to enable Google Search grounding
-            {
-                "googleSearch": {}
-            }
         ]
+        # REMOVED: "tools" section to disable Google Search grounding
     }
 
     try:
-        print("DEBUG: Sending request to Gemini API for website image processing...")
-        print(f"DEBUG: Using Gemini model 'gemini-2.0-flash' for website image processing.")
+        print("DEBUG: Sending request to Gemini API for image processing...")
+        print(f"DEBUG: Using Gemini model 'gemini-2.0-flash' for image processing (no grounding).")
         
         async with httpx.AsyncClient() as http_client:
             gemini_response = await http_client.post(
@@ -326,45 +287,35 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
         gemini_result = gemini_response.json()
         
         fact_check_result = "No result text found."
-        citations = []
+        citations = [] # Citations will no longer be available without grounding
         if gemini_result.get('candidates') and len(gemini_result['candidates']) > 0 and \
            gemini_result['candidates'][0].get('content') and \
            gemini_result['candidates'][0]['content'].get('parts') and \
            len(gemini_result['candidates'][0]['content']['parts']) > 0:
             fact_check_result = gemini_result['candidates'][0]['content']['parts'][0].get('text', 'No result text found.')
             
-            # Extract citation metadata if available
-            if gemini_result['candidates'][0].get('citationMetadata') and \
-               gemini_result['candidates'][0]['citationMetadata'].get('citations'):
-                for citation in gemini_result['candidates'][0]['citationMetadata']['citations']:
-                    if citation.get('uri'):
-                        citations.append(citation['uri'])
+            # Removed citation extraction as grounding is disabled
         else:
-            print(f"DEBUG: Unexpected Gemini response structure for website image: {gemini_result}")
-            # Consider raising an error here if unexpected structure is a critical failure
-            # For now, just log and continue with "No result text found."
+            print(f"DEBUG: Unexpected Gemini response structure for image: {gemini_result}")
 
-        print("DEBUG: Gemini request successful (Website)")
+        print("DEBUG: Gemini request successful (Image Fact-Check)")
         
         # Generate TTS for the Gemini fact-check result
         audio_base64 = text_to_speech(fact_check_result)
 
         return {"result": fact_check_result, "audio_result": audio_base64, "sources": citations}
     except httpx.HTTPStatusError as e:
-        # This covers 4xx/5xx HTTP errors from Gemini API
-        error_message = f"Gemini API HTTP Error (Website): Status {e.response.status_code}, Response: {e.response.text}"
-        print(f"Error: {error_message}") # Detailed error printed to logs
-        raise ValueError(error_message) # Re-raise as ValueError for FastAPI to catch
+        error_message = f"Gemini API HTTP Error (Image Fact-Check): Status {e.response.status_code}, Response: {e.response.text}"
+        print(f"Error: {error_message}") 
+        raise ValueError(error_message) 
     except json.JSONDecodeError as e:
-        # This catches errors if gemini_response.json() fails
         error_message = f"Failed to parse Gemini API response as JSON: {e}"
         print(f"Error: {error_message}")
         raise ValueError(error_message)
     except Exception as e:
-        # This is a generic catch-all for other exceptions
         error_message = f"An unexpected error occurred during Gemini image processing: {type(e).__name__}: {e}"
-        print(f"Error: {error_message}", exc_info=True) # Print full traceback
-        raise ValueError(error_message) # Re-raise as ValueError for FastAPI to catch
+        print(f"Error: {error_message}", exc_info=True)
+        raise ValueError(error_message)
 
 
 # --- WEB APP ENDPOINTS ---
@@ -452,8 +403,8 @@ async def factcheck_image_web(
             
         print(f"DEBUG: Detected image format via magic number (Website): {detected_format}")
         
-        # Call the new Gemini-specific image processing function
-        response = await perform_image_factcheck_gemini(image_bytes, file.content_type, caption)
+        # Call the unified Gemini-specific image processing function
+        response = await perform_image_factcheck(image_bytes, file.content_type, caption)
         return JSONResponse(content=response)
             
     except ValueError as ve:
@@ -482,12 +433,12 @@ async def startup_event():
     global telegram_application # Declare global to assign
 
     # Initialize bot components in the separate module
-    # Pass the OpenAI-based image fact-check function for the Telegram bot
+    # Pass the unified Gemini image fact-check function for the Telegram bot
     telegram_bot_handlers.initialize_bot_components(
         openai_client_instance=openai_client, 
         tts_func=text_to_speech,
         authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-        perform_image_factcheck_func=perform_image_factcheck_openai # <--- IMPORTANT: Telegram still uses OpenAI for images
+        perform_image_factcheck_func=perform_image_factcheck # <--- IMPORTANT: Now using unified Gemini function
     )
 
     if TELEGRAM_BOT_TOKEN:
@@ -526,7 +477,6 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         req_json = await request.json()
-        from telegram import Update 
         update = Update.de_json(req_json, telegram_application.bot)
         
         if update: 
@@ -541,13 +491,13 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"): 
         print("Running Telegram bot in local polling mode...")
-        from telegram import Update 
+        # from telegram import Update # Not needed here, only for webhook
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
         telegram_bot_handlers.initialize_bot_components(
             openai_client_instance=openai_client, 
             tts_func=text_to_speech,
             authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-            perform_image_factcheck_func=perform_image_factcheck_openai # <--- IMPORTANT: Telegram still uses OpenAI for images
+            perform_image_factcheck_func=perform_image_factcheck # <--- IMPORTANT: Now using unified Gemini function
         )
         telegram_application.run_polling(poll_interval=1)
     else:

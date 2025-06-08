@@ -6,7 +6,7 @@ import mimetypes
 from pydub import AudioSegment
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode # Still useful if you use specific parse modes later
+from telegram.constants import ParseMode 
 
 # These global variables will be set during the bot's initialization
 # by the main app.py file.
@@ -72,9 +72,8 @@ Instructions:
         }
     ]
     ai_response = _openai_client.chat.completions.create(
-        model="o4-mini", # Model is set to o4-mini
-        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
-        messages=messages # Using the new messages list
+        model="o4-mini", 
+        messages=messages 
     )
     fact_check_result = ai_response.choices[0].message.content
     audio_base64 = _tts_function(fact_check_result)
@@ -124,9 +123,8 @@ Instructions:
     ]
 
     ai_response = _openai_client.chat.completions.create(
-        model="o4-mini", # Model is set to o4-mini
-        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
-        messages=messages # Using the new messages list
+        model="o4-mini", 
+        messages=messages 
     )
     fact_check_result = ai_response.choices[0].message.content
     audio_base64_result = _tts_function(fact_check_result)
@@ -248,10 +246,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             print(f"Inferred MIME type for image from Telegram: {mime_type}") # For debugging
             # --- End MIME type determination ---
 
-            # The perform_image_factcheck_func (from app.py) already has the desired prompt structure
+            # Call the perform_image_factcheck_func (from app.py) which is now the unified Gemini function
             response = await _perform_image_factcheck_function(bytes(photo_bytes), mime_type, caption)
-            await message.reply_text(f"✅ Image Fact Check: {response.get('result', 'Error fetching result.')}")
+            
+            # Extract result, audio, and sources from the Gemini response
+            fact_check_result = response.get('result', 'Error fetching result.')
+            audio_base64 = response.get('audio_result')
+            sources = response.get('sources', [])
 
+            response_text = f"✅ Image Fact Check: {fact_check_result}"
+            if sources:
+                response_text += "\n\nSources:\n" + "\n".join([f"{i+1}. {url}" for i, url in enumerate(sources)])
+
+            await message.reply_text(response_text)
+
+            # Send the audio result if available
+            if audio_base64:
+                try:
+                    audio_bytes = base64.b64decode(audio_base64)
+                    audio = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
+                    ogg_output = io.BytesIO()
+                    audio.export(ogg_output, format="ogg", codec="libopus")
+                    ogg_output.seek(0)
+                    await context.bot.send_voice(chat_id=chat_id, voice=ogg_output)
+                except Exception as audio_e:
+                    print(f"Error sending audio for image fact-check: {audio_e}")
+                    await message.reply_text("Could not send audio response for the image fact-check.")
         else:
             await message.reply_text("Sorry, I can only fact-check text, voice messages, and photos.")
             
