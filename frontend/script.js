@@ -16,6 +16,10 @@ const newsArticlesContainer = document.getElementById("newsArticlesContainer");
 const newsSourceButtonsContainer = document.getElementById("newsSourceButtonsContainer"); // NEW
 const loadMoreBtn = document.getElementById("loadMoreBtn"); // NEW
 
+// Message box element - now assumed to be in index.html
+const messageBox = document.getElementById('messageBox');
+
+
 const BASE_URL = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
     ? "http://127.0.0.1:8000"
     : "https://proverify.onrender.com"; // <-- Update this if your Render URL changes!
@@ -30,31 +34,6 @@ const ARTICLES_PER_PAGE = 10; // Consistent with backend limit
 
 // Helper function to display messages to the user
 function showMessageBox(message, isError = false) {
-    const messageBox = document.getElementById('messageBox');
-    if (!messageBox) { // Create messageBox if it doesn't exist
-        const layout = document.querySelector('.layout');
-        messageBox = document.createElement('div');
-        messageBox.id = 'messageBox';
-        messageBox.style.cssText = `
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: #4CAF50;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
-            z-index: 1000;
-            display: none;
-            opacity: 0;
-            transition: opacity 0.5s ease-in-out;
-            max-width: 90%;
-            text-align: center;
-        `;
-        layout.parentNode.insertBefore(messageBox, layout);
-    }
-
     messageBox.textContent = message;
     messageBox.style.backgroundColor = isError ? "#f44336" : "#4CAF50";
     messageBox.style.display = "block";

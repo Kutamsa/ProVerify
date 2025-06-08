@@ -5,8 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Verify It</title>
-    <link rel="stylesheet" href="/static/style.css" />
-    <script src="/static/script.js" defer></script>
+    <!-- Updated paths to reference /frontend/ for static files -->
+    <link rel="stylesheet" href="/frontend/style.css" />
+    <script src="/frontend/script.js" defer></script>
 
 </head>
 
@@ -30,21 +31,17 @@
                 <div id="voiceMode" class="mode-section" style="display:block;">
                     <div class="record-btn-wrapper">
                         <button id="recordBtn" onclick="toggleRecording()" class="record-circle">🎤</button>
-                        <div id="recordLabel" class="record-label">Click to start recording</div>
+                        <div id="recordLabel" class="record-label">Click to Record</div>
                     </div>
-
-                    <audio id="player" controls style="display:none;"></audio>
-
-                    <div id="transcriptionBox" class="result-text" style="display: none;">
-                        <h3>🗣️ Transcription</h3>
-                        <p id="transcriptionText">(No transcription yet)</p>
+                    <audio id="player" controls style="width: 100%; margin-top: 15px; display: none;"></audio>
+                    <div id="transcriptionBox" class="transcription-box">
+                        <h4>Transcription:</h4>
+                        <p id="transcriptionText">Ready to transcribe...</p>
                     </div>
-
-
                 </div>
 
                 <div id="textMode" class="mode-section" style="display:none;">
-                    <textarea id="inputText" placeholder="Paste or type text to fact-check..." rows="4"></textarea>
+                    <textarea id="inputText" placeholder="Enter text to fact-check..."></textarea>
                     <button onclick="submitText()">Fact Check</button>
                 </div>
 
@@ -94,6 +91,8 @@
             </div>
         </div>
     </div>
+    <!-- The message box for user feedback, included directly in HTML -->
+    <div id="messageBox" class="message-box"></div>
 
 </body>
 

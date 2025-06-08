@@ -2,14 +2,13 @@ import os
 import io
 import base64
 import tempfile
-import mimetypes
 import imghdr
 from pydub import AudioSegment
 from google.cloud import texttospeech
 from fastapi import FastAPI, UploadFile, File, Form, Request, Response, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles # Ensure this is imported
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
@@ -37,98 +36,46 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 RENDER_SERVICE_URL = os.getenv("RENDER_SERVICE_URL")
 GOOGLE_CREDENTIALS_JSON_CONTENT = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
-# Initialize OpenAI Client
+# Global variables, initialized in lifespan
+tts_client = None
+telegram_application = None
+
+# Initialize OpenAI Client outside lifespan as it has no external dependencies beyond API key
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- Google Text-to-Speech Client ---
-tts_client = None
-temp_google_credentials_path = None # Global variable to store path for cleanup
-
-# FIX 3: Initialize telegram_application globally and robustly
-telegram_application = None
-if TELEGRAM_BOT_TOKEN:
-    try:
-        telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-        # Note: tts_func will be set in the lifespan event after tts_client is initialized
-        telegram_bot_handlers.initialize_bot_components(
-            openai_client_instance=openai_client,
-            tts_func=None, # Temporarily None, will be set in lifespan
-            authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-            perform_image_factcheck_func=perform_image_factcheck
-        )
-        print("Telegram bot components initialized globally (partial).")
-    except Exception as e:
-        print(f"Error initializing Telegram bot components globally: {e}")
-        telegram_application = None # Ensure it's None if initialization fails
-
-# --- FastAPI App Setup with Lifespan ---
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    global tts_client, temp_google_credentials_path, telegram_application
-
-    # Initialize Google TTS client and credentials
-    if GOOGLE_CREDENTIALS_JSON_CONTENT:
-        try:
-            temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
-            temp_file.write(GOOGLE_CREDENTIALS_JSON_CONTENT)
-            temp_file.close()
-            temp_google_credentials_path = temp_file.name # Store path to delete later
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_google_credentials_path
-            tts_client = texttospeech.TextToSpeechClient()
-            print("Google Text-to-Speech client initialized.")
-        except Exception as e:
-            print(f"Error initializing Google TTS client: {e}")
-            tts_client = None
-    else:
-        print("GOOGLE_CREDENTIALS_JSON environment variable not set. Google TTS will be unavailable.")
-
-    # Initialize database
-    init_news_db()
-
-    # FIX 3: Update telegram_application with the real tts_func after tts_client is ready
-    if telegram_application:
-        telegram_bot_handlers.initialize_bot_components(
-            openai_client_instance=openai_client,
-            tts_func=text_to_speech, # Now passing the real text_to_speech function
-            authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-            perform_image_factcheck_func=perform_image_factcheck
-        )
-        print("Telegram bot components updated with TTS function.")
-
-    yield # Application starts here
-
-    # Cleanup on shutdown
-    if temp_google_credentials_path and os.path.exists(temp_google_credentials_path):
-        os.remove(temp_google_credentials_path)
-        print(f"Cleaned up temporary Google credentials file: {temp_google_credentials_path}")
-
-app = FastAPI(lifespan=lifespan)
-
-# --- CORS Middleware ---
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# --- Static Files (HTML, CSS, JS) ---
-# IMPORTANT CHANGE HERE:
-# Mount the 'static' directory explicitly
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
-# --- Database Initialization (PostgreSQL) ---
+# --- Database Connection ---
 def get_db_connection():
     if not DATABASE_URL:
-        raise ValueError("DATABASE_URL environment variable is not set.")
-    return psycopg2.connect(DATABASE_URL)
+        print("DATABASE_URL environment variable is not set.")
+        return None
+    try:
+        result = urlparse(DATABASE_URL)
+        username = result.username
+        password = result.password
+        database = result.path[1:]
+        hostname = result.hostname
+        port = result.port
+        conn = psycopg2.connect(
+            database=database,
+            user=username,
+            password=password,
+            host=hostname,
+            port=port
+        )
+        return conn
+    except Exception as e:
+        print(f"Error connecting to the database: {e}")
+        return None
 
+# --- Database Initialization (PostgreSQL) ---
 def init_news_db():
     conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            print("Skipping DB initialization due to connection error.")
+            return
+
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS sources (
@@ -155,16 +102,94 @@ def init_news_db():
         if conn:
             conn.close()
 
+
+# --- Lifespan Context for FastAPI ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global tts_client, telegram_application
+
+    # Initialize Google TTS client and credentials
+    if GOOGLE_CREDENTIALS_JSON_CONTENT:
+        try:
+            temp_file = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
+            temp_file.write(GOOGLE_CREDENTIALS_JSON_CONTENT)
+            temp_file.close()
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file.name # Set env var for Google client
+            tts_client = texttospeech.TextToSpeechClient()
+            print("Google Text-to-Speech client initialized.")
+        except Exception as e:
+            print(f"Error initializing Google TTS client: {e}")
+            tts_client = None
+            # Clean up temp file if creation succeeded but client init failed
+            if os.path.exists(temp_file.name):
+                os.remove(temp_file.name)
+    else:
+        print("GOOGLE_CREDENTIALS_JSON environment variable not set. Google TTS will be unavailable.")
+
+    # Initialize database
+    init_news_db()
+
+    # Initialize Telegram Bot components ONLY within lifespan
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
+            telegram_bot_handlers.initialize_bot_components(
+                openai_client_instance=openai_client,
+                tts_func=text_to_speech if tts_client else None, # Pass actual TTS func if client is ready
+                authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
+                perform_image_factcheck_func=perform_image_factcheck
+            )
+            print("Telegram bot components initialized within lifespan.")
+        except Exception as e:
+            print(f"Error initializing Telegram bot components in lifespan: {e}")
+            telegram_application = None
+    else:
+        print("TELEGRAM_BOT_TOKEN not set. Telegram bot will not be active.")
+
+    yield # Application starts here
+
+    # Cleanup on shutdown
+    # Clean up temporary Google credentials file
+    if GOOGLE_CREDENTIALS_JSON_CONTENT and os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+        temp_file_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+            del os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+            print(f"Cleaned up temporary Google credentials file: {temp_file_path}")
+
+
+app = FastAPI(lifespan=lifespan)
+
+# --- CORS Middleware ---
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# --- Static Files (HTML, CSS, JS) ---
+# Assuming app.py is in 'backend' and static files are in 'frontend'
+current_dir = os.path.dirname(os.path.abspath(__file__))
+frontend_dir = os.path.join(current_dir, "..", "frontend") # Go up one level, then into frontend
+
+# Mount the 'frontend' directory to serve all static files under /frontend/
+# e.g., /frontend/index.html, /frontend/style.css, /frontend/script.js
+app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend")
+
+
 # --- Utility Functions ---
-async def text_to_speech(text: str) -> bytes:
+# Note: text_to_speech relies on tts_client, which is initialized in lifespan
+def text_to_speech(text: str) -> bytes:
     if not tts_client:
-        print("TTS client not available.")
-        return b""
+        print("TTS client not available for synthesis.")
+        return b"" # Return empty bytes if client not available
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
-        language_code="te-IN",
-        name="te-IN-Chirp3-HD-Achird",
-        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+        language_code="te-IN", # Assuming Telugu, as per previous handlers
+        name="te-IN-Wavenet-B", # Using a common Wavenet voice
+        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE # Or NEUTRAL
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
@@ -200,7 +225,6 @@ async def transcribe_audio(audio_file: UploadFile) -> str:
         os.remove(temp_audio_file.name)
 
 async def perform_text_factcheck(text: str) -> str:
-    # FIX 7: Missing openai_client check
     if not OPENAI_API_KEY:
         return "Error: OpenAI API key is not configured for text fact-checking."
     try:
@@ -215,7 +239,7 @@ async def perform_text_factcheck(text: str) -> str:
                     "content": f"Fact-check this: {text}"
                 }
             ],
-            model="gpt-4o",
+            model="gpt-4o", # Using gpt-4o as discussed
         )
         return chat_completion.choices[0].message.content
     except Exception as e:
@@ -226,13 +250,18 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
     if not GEMINI_API_KEY:
         return "Gemini API key is not configured for image fact-checking."
 
-    # FIX 6: Prioritize imghdr for more robust MIME type detection
+    # Robust MIME type detection
     mime_type = None
     img_type = imghdr.what(None, h=image_data)
     if img_type:
         mime_type = f"image/{img_type}"
     else:
-        mime_type = "application/octet-stream" # Generic fallback
+        # Fallback for types imghdr might not recognize, e.g., webp
+        # If possible, derive from file extension or content-type header
+        # For simplicity, if imghdr fails, we might default or raise an error
+        print("Warning: imghdr could not determine image type. Falling back to octet-stream.")
+        mime_type = "application/octet-stream"
+
 
     image_parts = []
     image_parts.append({
@@ -287,8 +316,8 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
 # --- FastAPI Endpoints ---
 @app.get("/")
 async def read_root():
-    # IMPORTANT CHANGE HERE: Serve index.html from the 'static' directory
-    return FileResponse('static/index.html')
+    # Serve index.html from the mounted frontend directory
+    return FileResponse(os.path.join(frontend_dir, 'index.html'))
 
 @app.post("/factcheck/audio")
 async def factcheck_audio(audio_file: UploadFile = File(...)):
@@ -349,6 +378,8 @@ async def add_news_source(source_url: str = Form(...), source_name: str = Form(.
     conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return JSONResponse(status_code=500, content={"error": "Database connection not established."})
         cur = conn.cursor()
         cur.execute("INSERT INTO sources (name, url) VALUES (%s, %s) RETURNING id;", (source_name, source_url))
         source_id = cur.fetchone()[0]
@@ -370,6 +401,8 @@ async def remove_news_source(source_id: int = Form(...)):
     conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return JSONResponse(status_code=500, content={"error": "Database connection not established."})
         cur = conn.cursor()
         cur.execute("DELETE FROM sources WHERE id = %s;", (source_id,))
         conn.commit()
@@ -389,6 +422,8 @@ async def get_news_sources():
     conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return JSONResponse(status_code=500, content={"error": "Database connection not established."})
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         cur.execute("SELECT id, name, url FROM sources ORDER BY created_at DESC;")
         sources = cur.fetchall()
@@ -409,6 +444,8 @@ async def get_news_articles(
     conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return JSONResponse(status_code=500, content={"error": "Database connection not established."})
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
         query = """
@@ -467,6 +504,8 @@ async def fetch_and_store_news(source_id: int):
     conn = None
     try:
         conn = get_db_connection()
+        if not conn:
+            return JSONResponse(status_code=500, content={"error": "Database connection not established."})
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
         cur.execute("SELECT id, url, name FROM sources WHERE id = %s;", (source_id,))

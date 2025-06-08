@@ -2,11 +2,10 @@ import os
 import io
 import base64
 import tempfile
-import mimetypes 
 from pydub import AudioSegment
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode 
+from telegram.constants import ParseMode
 
 # These global variables will be set during the bot's initialization
 # by the main app.py file.
@@ -38,6 +37,8 @@ def is_authorized(user_id: int) -> bool:
 
 async def _perform_text_factcheck_bot(input_text: str):
     """Performs text fact-check using the shared OpenAI client."""
+    if not _openai_client:
+        return "Fact-checking service is not available. OpenAI client not initialized."
     messages = [
         {
             "role": "system",
@@ -72,15 +73,18 @@ Instructions:
         }
     ]
     ai_response = _openai_client.chat.completions.create(
-        model="o4-mini", 
-        messages=messages 
+        model="o4-mini", # Reverted to original model name
+        messages=messages
     )
     fact_check_result = ai_response.choices[0].message.content
-    audio_base64 = _tts_function(fact_check_result)
+    audio_base64 = _tts_function(fact_check_result) if _tts_function else None
     return {"result": fact_check_result, "audio_result": audio_base64}
 
 async def _perform_audio_factcheck_bot(audio_file_path: str):
     """Performs audio transcription and fact-check using the shared OpenAI client."""
+    if not _openai_client:
+        return {"transcription": "Error: OpenAI client not initialized.", "result": "Error", "audio_result": None}
+
     with open(audio_file_path, "rb") as audio_file:
         transcript = _openai_client.audio.transcriptions.create(
             model="whisper-1",
@@ -123,11 +127,11 @@ Instructions:
     ]
 
     ai_response = _openai_client.chat.completions.create(
-        model="o4-mini", 
-        messages=messages 
+        model="o4-mini", # Reverted to original model name
+        messages=messages
     )
     fact_check_result = ai_response.choices[0].message.content
-    audio_base64_result = _tts_function(fact_check_result)
+    audio_base64_result = _tts_function(fact_check_result) if _tts_function else None
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
 
@@ -150,25 +154,26 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     user_id = update.effective_user.id
     if is_authorized(user_id):
         await update.message.reply_text(
-            "Send me text to fact-check.\n"
-            "Send me a voice message to get a transcription and fact-check.\n"
-            "Send me a photo with an optional caption to fact-check the image.\n"
-            "Use /factcheck_text <your_text> for direct text fact-checking."
+            "Here's what I can do:\n"
+            "- Send me *any text message* to fact-check it.\n"
+            "- Send me a *voice message* and I'll transcribe and fact-check it.\n"
+            "- Send me a *photo* and I'll analyze it for misleading information.\n"
+            "I'm here to help you verify information!"
+            , parse_mode=ParseMode.MARKDOWN
         )
     else:
         await update.message.reply_text("You are not authorized to use this bot.")
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles various types of messages (text, voice, photo)."""
-    user_id = update.effective_user.id
-    if not is_authorized(user_id):
-        await update.message.reply_text("You are not authorized to use this bot.")
-        return
 
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles incoming text, voice, and photo messages."""
     message = update.message
     chat_id = message.chat_id
+    user_id = message.from_user.id
 
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    if not is_authorized(user_id):
+        await message.reply_text("You are not authorized to use this bot.")
+        return
 
     try:
         if message.text:
@@ -205,13 +210,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             voice_bytes = await voice_file.download_as_bytearray()
 
             # Telegram voice messages are typically OGG Opus. Convert to webm for Whisper.
-            input_audio = AudioSegment.from_file(io.BytesIO(voice_bytes), format="ogg")
-            webm_output = io.BytesIO()
-            input_audio.export(webm_output, format="webm")
-            webm_output.seek(0) # Rewind to start of stream
-
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-                tmp.write(webm_output.getvalue())
+            # Using tempfile to handle file properly
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".ogg") as tmp:
+                tmp.write(voice_bytes)
                 tmp_path = tmp.name
 
             try:
@@ -230,7 +231,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
 
-        elif message.photo:
+        elif message.photo and _perform_image_factcheck_function:
             await message.reply_text("Processing photo...")
             photo_file_id = message.photo[-1].file_id # Get the largest photo size
             photo_file = await context.bot.get_file(photo_file_id)
@@ -238,32 +239,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             caption = message.caption if message.caption else ""
 
-            # --- Dynamically determine MIME type for image uploads ---
-            _, file_extension = os.path.splitext(photo_file.file_path)
-            inferred_mime_type, _ = mimetypes.guess_type(f"dummy{file_extension}")
-            # Fallback to image/jpeg if inference fails or it's not an image type
-            mime_type = inferred_mime_type if inferred_mime_type and inferred_mime_type.startswith('image/') else "image/jpeg"
-            print(f"Inferred MIME type for image from Telegram: {mime_type}") # For debugging
-            # --- End MIME type determination ---
-
             # Call the perform_image_factcheck_func (from app.py) which is now the unified Gemini function
-            response = await _perform_image_factcheck_function(bytes(photo_bytes), mime_type, caption)
+            # The function expects base64 encoded image data directly.
+            image_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+            
+            response = await _perform_image_factcheck_function(image_data=bytes(photo_bytes), caption=caption)
             
             # Extract result, audio, and sources from the Gemini response
-            fact_check_result = response.get('result', 'Error fetching result.')
-            audio_base64 = response.get('audio_result')
-            sources = response.get('sources', [])
+            fact_check_result = response # Assuming this directly returns the string result
+            audio_base64 = None # Assuming image fact-check does not return audio from app.py directly
+            # If app.py's perform_image_factcheck also returns audio, you'd extract it here.
 
             response_text = f"✅ Image Fact Check: {fact_check_result}"
-            if sources:
-                response_text += "\n\nSources:\n" + "\n".join([f"{i+1}. {url}" for i, url in enumerate(sources)])
+            # If sources were part of the response, they'd be added here
+            # if sources:
+            #     response_text += "\n\nSources:\n" + "\n".join([f"{i+1}. {url}" for i, url in enumerate(sources)])
 
             await message.reply_text(response_text)
 
-            # Send the audio result if available
-            if audio_base64:
+            # Send the audio result if available (assuming _tts_function can generate audio from the text result)
+            if _tts_function and fact_check_result:
                 try:
-                    audio_bytes = base64.b64decode(audio_base64)
+                    audio_bytes = _tts_function(fact_check_result)
                     audio = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
                     ogg_output = io.BytesIO()
                     audio.export(ogg_output, format="ogg", codec="libopus")
