@@ -37,13 +37,45 @@ def is_authorized(user_id: int) -> bool:
 
 async def _perform_text_factcheck_bot(input_text: str):
     """Performs text fact-check using the shared OpenAI client."""
-    prompt = f"Fact-check this text and provide a clear answer:\n\n{input_text}"
+    # --- START CHANGES FOR NEW PROMPT STRUCTURE ---
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a smart and honest Telugu-speaking fact checker. You speak like a well-informed, friendly human who mixes Telugu and English naturally. You never repeat yourself. Be accurate, clear, and real."
+        },
+        {
+            "role": "user",
+            "content": "మోదీ అమెరికా ప్రదాని"
+        },
+        {
+            "role": "assistant",
+            "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు జో బైడెన్. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
+        },
+        {
+            "role": "user",
+            "content": f"""
+You're given a statement in Telugu. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
+
+Statement:
+"{input_text}"
+
+Instructions:
+- Respond in clear, simple Telugu — use English only where needed.
+- Do not respond in bullet points. Write like you're explaining it to someone directly.
+- If the statement is false, explain why.
+- If it's true, provide some brief context or clarification.
+- If it's controversial, be honest and neutral. Don't dodge the question.
+- If you don't know, say so clearly.
+- Do not repeat yourself.
+- Use natural sentence flow like a real person would.
+"""
+        }
+    ]
+    # --- END CHANGES FOR NEW PROMPT STRUCTURE ---
     ai_response = _openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You're a helpful fact-checking assistant. Respond clearly and concisely."},
-            {"role": "user", "content": prompt}
-        ]
+        model="o4-mini", # Model is set to o4-mini
+        temperature=0.2,
+        messages=messages # Using the new messages list
     )
     fact_check_result = ai_response.choices[0].message.content
     audio_base64 = _tts_function(fact_check_result)
@@ -58,13 +90,46 @@ async def _perform_audio_factcheck_bot(audio_file_path: str):
         )
         transcribed_text = transcript.text
 
-    prompt = f"Fact-check this audio content (transcribed in Telugu):\n\n{transcribed_text}"
+    # --- START CHANGES FOR NEW PROMPT STRUCTURE ---
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a smart and honest Telugu-speaking fact checker. You speak like a well-informed, friendly human who mixes Telugu and English naturally. You never repeat yourself. Be accurate, clear, and real."
+        },
+        {
+            "role": "user",
+            "content": "మోదీ అమెరికా ప్రదాని"
+        },
+        {
+            "role": "assistant",
+            "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు జో బైడెన్. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
+        },
+        {
+            "role": "user",
+            "content": f"""
+You're given a statement in Telugu. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
+
+Statement:
+"{transcribed_text}" # Using transcribed_text here
+
+Instructions:
+- Respond in clear, simple Telugu — use English only where needed.
+- Do not respond in bullet points. Write like you're explaining it to someone directly.
+- If the statement is false, explain why.
+- If it's true, provide some brief context or clarification.
+- If it's controversial, be honest and neutral. Don't dodge the question.
+- If you don't know, say so clearly.
+- Do not repeat yourself.
+- Use natural sentence flow like a real person would.
+"""
+        }
+    ]
+    # --- END CHANGES FOR NEW PROMPT STRUCTURE ---
+
     ai_response = _openai_client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You're a Telugu fact-checking assistant. Provide clear and concise answers in Telugu."},
-            {"role": "user", "content": prompt}
-        ]
+        model="o4-mini", # Model is set to o4-mini
+        temperature=0.2,
+        messages=messages # Using the new messages list
     )
     fact_check_result = ai_response.choices[0].message.content
     audio_base64_result = _tts_function(fact_check_result)
@@ -181,6 +246,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             caption = message.caption if message.caption else ""
             mime_type = "image/jpeg" # Common type for Telegram photos
 
+            # The perform_image_factcheck_func (from app.py) already has the desired prompt structure
             response = await _perform_image_factcheck_function(bytes(photo_bytes), mime_type, caption)
             await message.reply_text(f"✅ Image Fact Check: {response.get('result', 'Error fetching result.')}")
 
