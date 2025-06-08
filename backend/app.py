@@ -92,7 +92,6 @@ def text_to_speech(text: str) -> str:
 
 # --- FACT-CHECKING FUNCTIONS (reused and now directly called by web app and bot) ---
 async def perform_text_factcheck(input_text: str):
-    # --- START CHANGES FOR NEW PROMPT STRUCTURE ---
     messages = [
         {
             "role": "system",
@@ -126,13 +125,13 @@ Instructions:
 """
         }
     ]
-    # --- END CHANGES FOR NEW PROMPT STRUCTURE ---
 
     ai_response = client.chat.completions.create(
-        model="o4-mini", # Model is set to o4-mini
+        model="o4-mini",
         temperature=0.2,
-        messages=messages # Using the new messages list
+        messages=messages
     )
+
     fact_check_result = ai_response.choices[0].message.content
     audio_base64 = text_to_speech(fact_check_result)
     return {"result": fact_check_result, "audio_result": audio_base64}
@@ -145,7 +144,6 @@ async def perform_audio_factcheck(audio_file_path: str):
         )
         transcribed_text = transcript.text
 
-    # --- START CHANGES FOR NEW PROMPT STRUCTURE ---
     messages = [
         {
             "role": "system",
@@ -179,20 +177,19 @@ Instructions:
 """
         }
     ]
-    # --- END CHANGES FOR NEW PROMPT STRUCTURE ---
 
     ai_response = client.chat.completions.create(
-        model="o4-mini", # Model is set to o4-mini
+        model="o4-mini",
         temperature=0.2,
-        messages=messages # Using the new messages list
+        messages=messages
     )
+
     fact_check_result = ai_response.choices[0].message.content
     audio_base64_result = text_to_speech(fact_check_result)
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
 async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    # --- START CHANGES FOR NEW PROMPT STRUCTURE ---
     messages = [
         {
             "role": "system",
@@ -215,15 +212,15 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
                 {"type": "text", "text": f"Please fact-check this image. Context: {caption}" if caption else "Please fact-check this image."},
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{b64_image}"}
+                    "image_url": {"url": f"data:{mime_type};base64,{b64_image}"} # FIXED: Using dynamic mime_type from file
                 }
             ],
         }
     ]
-    # --- END CHANGES FOR NEW PROMPT STRUCTURE ---
+
     response = client.chat.completions.create(
-        model="o4-mini", # Model is set to o4-mini
-        messages=messages, # Using the new messages list
+        model="o4-mini",
+        messages=messages,
         max_tokens=500
     )
     return {"result": response.choices[0].message.content}
@@ -261,6 +258,7 @@ async def factcheck_image_web(
 ):
     try:
         image_bytes = await file.read()
+        # Ensure file.content_type is used for mime_type
         response = await perform_image_factcheck(image_bytes, file.content_type, caption)
         return JSONResponse(content=response)
     except Exception as e:
