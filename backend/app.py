@@ -11,6 +11,7 @@ from openai import OpenAI
 import base64
 from dotenv import load_dotenv
 import json
+import imghdr # <--- NEW IMPORT: for guessing image type from content
 
 # Import Telegram bot setup from our new module
 from . import telegram_bot_handlers # Relative import within backend package
@@ -189,6 +190,35 @@ Instructions:
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
 async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
+    # --- START NEW IMAGE TYPE INFERENCE LOGIC ---
+    # Try to guess mime type from image content, which is more robust than just header
+    # and map it to common types OpenAI expects.
+    guessed_type = imghdr.what(None, h=image_bytes)
+    
+    mime_type_for_openai = None
+    if guessed_type == 'jpeg':
+        mime_type_for_openai = 'image/jpeg'
+    elif guessed_type == 'png':
+        mime_type_for_openai = 'image/png'
+    elif guessed_type == 'gif':
+        mime_type_for_openai = 'image/gif'
+    # imghdr does not support webp directly, so we trust the original mime_type if it's webp
+    elif mime_type == 'image/webp':
+        mime_type_for_openai = 'image/webp'
+    
+    # Fallback to original mime_type if imghdr couldn't guess or it's not a common type
+    if not mime_type_for_openai:
+        # Validate against OpenAI's explicitly supported list
+        allowed_mime_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+        if mime_type not in allowed_mime_types:
+            raise ValueError(f"Unsupported image MIME type received: {mime_type}. Allowed: {allowed_mime_types}")
+        mime_type_for_openai = mime_type # Trust the original if it's in the allowed list
+
+    print(f"DEBUG: Original MIME type from FastAPI: {mime_type}")
+    print(f"DEBUG: Inferred MIME type for OpenAI: {mime_type_for_openai}")
+
+    # --- END NEW IMAGE TYPE INFERENCE LOGIC ---
+
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     messages = [
         {
@@ -212,19 +242,24 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
                 {"type": "text", "text": f"Please fact-check this image. Context: {caption}" if caption else "Please fact-check this image."},
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:{mime_type};base64,{b64_image}"} # Fixed previously
+                    # Use the dynamically inferred mime_type_for_openai
+                    "image_url": {"url": f"data:{mime_type_for_openai};base64,{b64_image}"}
                 }
             ],
         }
     ]
 
-    response = client.chat.completions.create(
-        model="o4-mini",
-        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
-        messages=messages,
-        max_tokens=500
-    )
-    return {"result": response.choices[0].message.content}
+    try:
+        response = client.chat.completions.create(
+            model="o4-mini",
+            messages=messages,
+            max_tokens=500
+        )
+        return {"result": response.choices[0].message.content}
+    except Exception as e:
+        print(f"Error calling OpenAI API for image: {e}")
+        # Re-raise the exception after printing for visibility in logs
+        raise # Re-raise to be caught by the FastAPI endpoint handler
 
 # --- WEB APP ENDPOINTS (now call shared fact-checking functions) ---
 @app.post("/factcheck/text")
@@ -259,6 +294,7 @@ async def factcheck_image_web(
 ):
     try:
         image_bytes = await file.read()
+        # file.content_type is what FastAPI gets from the browser's header
         response = await perform_image_factcheck(image_bytes, file.content_type, caption)
         return JSONResponse(content=response)
     except Exception as e:
