@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
-import json
+import json # Explicitly import for handling GOOGLE_CREDENTIALS_JSON
 import httpx
 
 # Import Telegram bot setup from our new module (relative import)
@@ -24,22 +24,20 @@ from telegram import Update
 import psycopg2
 import psycopg2.extras # For DictCursor
 from urllib.parse import urlparse
-import feedparser
 from datetime import datetime, timedelta
+import feedparser
 
 load_dotenv()
 
-# --- IMPORTANT ---
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
-# --- Gemini API Config ---
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# --- Telegram Bot Config ---
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# --- Load Environment Variables using the EXACT names you provided ---
+OPENAI_API_KEY = os.getenv("OPENAI API KEY")
+GEMINI_API_KEY = os.getenv("GEMINI API KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM BOT TOKEN")
 # Convert comma-separated string to a list of integers
-AUTHORIZED_TELEGRAM_USER_IDS = [int(x) for x in os.getenv("AUTHORIZED_TELEGRAM_USER_IDS", "").split(',') if x.strip().isdigit()]
+AUTHORIZED_TELEGRAM_USER_IDS = [int(x) for x in os.getenv("AUTHORIZED TELEGRAM USER IDS", "").split(',') if x.strip().isdigit()]
+DATABASE_URL = os.getenv("DATABASE URL")
+RENDER_SERVICE_URL = os.getenv("RENDER SERVICE URL")
+GOOGLE_CREDENTIALS_JSON_CONTENT = os.getenv("GOOGLE CREDENTIALS JSON") # This holds the JSON string content
 
 # --- FastAPI App Setup ---
 app = FastAPI()
@@ -53,12 +51,55 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Google Text-to-Speech Client ---
-# Ensure GOOGLE_APPLICATION_CREDENTIALS environment variable is set
-# pointing to your service account key file path on Render.
-tts_client = texttospeech.TextToSpeechClient()
+# --- Google Text-to-Speech Client Initialization (using GOOGLE_CREDENTIALS_JSON) ---
+tts_client = None # Initialize as None, will be set up in startup event
 
+@app.on_event("startup")
+async def startup_event():
+    # Initialize the PostgreSQL database for news feeds
+    init_news_db()
+
+    # Setup Google TTS credentials from environment variable
+    global tts_client # Declare global to modify the tts_client variable
+    if GOOGLE_CREDENTIALS_JSON_CONTENT:
+        try:
+            # Create a temporary file to store the credentials
+            temp_dir = tempfile.gettempdir()
+            temp_file_path = os.path.join(temp_dir, "google_credentials.json")
+
+            with open(temp_file_path, "w") as temp_file:
+                # Ensure the content is valid JSON before writing
+                credentials_data = json.loads(GOOGLE_CREDENTIALS_JSON_CONTENT)
+                json.dump(credentials_data, temp_file)
+
+            # Set the GOOGLE_APPLICATION_CREDENTIALS environment variable for the current process
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_file_path
+            tts_client = texttospeech.TextToSpeechClient() # Initialize TTS client
+            # print("Google Text-to-Speech client initialized successfully.") # Removed for no logs
+
+        except json.JSONDecodeError:
+            raise RuntimeError("GOOGLE_CREDENTIALS_JSON environment variable is not valid JSON.")
+        except Exception as e:
+            raise RuntimeError(f"Error setting up Google Text-to-Speech credentials from environment variable: {e}")
+    else:
+        # This means GOOGLE_CREDENTIALS_JSON was not set or empty. TTS will likely fail.
+        # Attempt to initialize anyway, but it's likely to fail unless ADC is otherwise configured.
+        try:
+            tts_client = texttospeech.TextToSpeechClient()
+        except Exception as e:
+            raise RuntimeError(f"Google_credentials_json not found, and TTS client initialization failed: {e}")
+
+    # The Telegram bot local polling is handled in the __main__ block for local dev
+    # On Render, it's driven by webhooks, so no polling setup needed here.
+    pass # This startup event already handles db init and TTS client setup
+
+# --- Async Function for Text-to-Speech ---
 async def text_to_speech(text: str) -> bytes:
+    if not tts_client:
+        # Handle case where TTS client failed to initialize
+        # print("Text-to-Speech client not initialized. Cannot synthesize speech.") # Removed for no logs
+        return b"" # Return empty bytes or raise a specific error
+
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
         language_code="en-US",
@@ -86,7 +127,6 @@ async def get_text_fact_check_response(text: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        # Simplified error handling for production (no verbose logs)
         return f"Error during text fact-checking: {e}"
 
 async def perform_image_factcheck(image_bytes: bytes, caption: str = None) -> str:
@@ -207,6 +247,7 @@ async def fact_check_image(file: UploadFile = File(...), caption: str = Form(Non
 
 # --- Telegram Webhook ---
 # Ensure telegram_bot_handlers.py is accessible at the same level as app.py
+telegram_application = None # Initialize as None
 if TELEGRAM_BOT_TOKEN:
     telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
     telegram_bot_handlers.initialize_bot_components(
@@ -218,7 +259,7 @@ if TELEGRAM_BOT_TOKEN:
 
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    if not TELEGRAM_BOT_TOKEN:
+    if not TELEGRAM_BOT_TOKEN or not telegram_application:
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content="Telegram bot not configured.")
 
     try:
@@ -239,12 +280,10 @@ class AddSourceRequest(BaseModel):
 
 # Database connection function for PostgreSQL
 def get_news_db_connection():
-    database_url = os.getenv("DATABASE_URL")
-    if not database_url:
-        # In a production environment, you might want to raise a more specific error or exit
-        raise ValueError("DATABASE_URL environment variable not set. News Feed functionality will not work without a database connection.")
+    if not DATABASE_URL:
+        raise ValueError("DATABASE URL environment variable not set. News Feed functionality will not work without a database connection.")
 
-    result = urlparse(database_url)
+    result = urlparse(DATABASE_URL)
     username = result.username
     password = result.password
     database = result.path[1:]
@@ -286,16 +325,12 @@ def init_news_db():
                 ''')
                 conn.commit()
     except Exception as e:
-        # It's crucial to handle DB initialization errors, as the app won't function
         raise RuntimeError(f"Failed to initialize PostgreSQL database: {e}")
 
+# This ensures database and TTS client are initialized when FastAPI starts
 @app.on_event("startup")
-async def startup_event():
-    # Initialize the PostgreSQL database for news feeds
-    init_news_db()
-    # The Telegram bot local polling is handled in the __main__ block for local dev
-    # On Render, it's driven by webhooks, so no polling setup needed here.
-    pass
+async def startup_event_handler(): # Renamed to avoid conflict with global startup_event
+    await startup_event() # Call the main startup_event logic
 
 @app.post("/news/add_source")
 async def add_news_source(source_data: AddSourceRequest):
@@ -347,13 +382,12 @@ async def get_news_articles():
 
                     # Handle bozo feeds gracefully (parsing errors)
                     if feed.bozo:
-                        # Log the bozo exception if needed for debugging, but don't stop process
-                        pass
+                        pass # No logging as per instruction
 
                     if not feed.entries:
                         # Add a placeholder for sources with no entries
                         all_articles.append({
-                            "title": f"No articles available from {source_name}", # Removed URL from message
+                            "title": f"No articles available from {source_name}",
                             "link": "#",
                             "source": source_name,
                             "pubDate": None
@@ -389,7 +423,7 @@ async def get_news_articles():
                         # Insert into cache, handle potential duplicates
                         try:
                             cur.execute("INSERT INTO articles (source_id, title, link, pub_date, fetched_at) VALUES (%s, %s, %s, %s, %s)",
-                                          (source_id, title, link, pub_date_str, datetime.now().isoformat()))
+                                        (source_id, title, link, pub_date_str, datetime.now().isoformat()))
                             conn.commit()
                         except psycopg2.errors.UniqueViolation:
                             conn.rollback() # Rollback current transaction if duplicate link exists
@@ -412,18 +446,17 @@ if __name__ == "__main__":
 
     # This block handles local Telegram bot polling.
     # It will be skipped when RENDER_SERVICE_URL is set (i.e., on Render deployment).
-    if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"):
+    if TELEGRAM_BOT_TOKEN and not RENDER_SERVICE_URL:
         # The telegram_application needs to be initialized here for local polling to work.
         # Ensure telegram_application is defined in this scope.
-        # This setup should match how you initialize it in telegram_bot_handlers.py
-        if 'telegram_application' not in locals(): # Check if it's already defined
-             telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-             telegram_bot_handlers.initialize_bot_components(
-                 openai_client_instance=openai_client,
-                 tts_func=text_to_speech,
-                 authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-                 perform_image_factcheck_func=perform_image_factcheck
-             )
+        if 'telegram_application' not in locals() or telegram_application is None:
+            telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
+            telegram_bot_handlers.initialize_bot_components(
+                openai_client_instance=openai_client,
+                tts_func=text_to_speech,
+                authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
+                perform_image_factcheck_func=perform_image_factcheck
+            )
         telegram_application.run_polling(poll_interval=3.0)
     else:
         # This block runs the FastAPI app, for Render deployment or if Telegram bot is not configured locally.
