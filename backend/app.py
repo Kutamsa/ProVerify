@@ -251,7 +251,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
 
     try:
         response = client.chat.completions.create(
-            model="o4-mini",
+            model="gpt-4o",
             messages=messages,
             max_tokens=500
         )
