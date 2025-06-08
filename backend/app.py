@@ -2,504 +2,429 @@ import os
 import io
 import base64
 import tempfile
-import mimetypes # For MIME type inference from file extension
-import imghdr # For robust image type inference from content
-from pydub import AudioSegment # For audio processing (used in Telegram bot)
+import mimetypes
+import imghdr
+from pydub import AudioSegment
 from google.cloud import texttospeech
 from fastapi import FastAPI, UploadFile, File, Form, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from openai import OpenAI # Keep OpenAI import for text/audio
+from openai import OpenAI
 from dotenv import load_dotenv
 import json
-import httpx # Import httpx for making asynchronous HTTP requests to Gemini
+import httpx
 
 # Import Telegram bot setup from our new module (relative import)
-from . import telegram_bot_handlers 
-from telegram import Update # Import Update class directly here for de_json for webhook
+# This assumes 'telegram_bot_handlers.py' is in the same directory as 'app.py'
+from . import telegram_bot_handlers
+from telegram import Update
+
+# NEW IMPORTS for News Feed (PostgreSQL)
+import psycopg2
+import psycopg2.extras # For DictCursor
+from urllib.parse import urlparse
+import feedparser
+from datetime import datetime, timedelta
 
 load_dotenv()
 
 # --- IMPORTANT ---
-# Ensure your OPENAI_API_KEY is set in your .env file locally,
-# and as an environment variable on Render.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-# Keep OpenAI client for text/audio processing AND for Telegram bot's text/audio transcription
-openai_client = OpenAI(api_key=OPENAI_API_KEY) 
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- Gemini API Config ---
-# For Canvas runtime, GEMINI_API_KEY can be an empty string, as Canvas injects it.
-# For Render deployment, it MUST be read from environment variables.
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Read from environment variable
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# --- TELEGRAM BOT CONFIG ---
+# --- Telegram Bot Config ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-# Authorized user IDs for bot access (comma-separated string in env var)
-# Example: AUTHORIZED_TELEGRAM_USER_IDS="12345,67890"
-AUTHORIZED_TELEGRAM_USER_IDS = [int(uid) for uid in os.getenv("AUTHORIZED_TELEGRAM_USER_IDS", "").split(',') if uid.strip().isdigit()]
+# Convert comma-separated string to a list of integers
+AUTHORIZED_TELEGRAM_USER_IDS = [int(x) for x in os.getenv("AUTHORIZED_TELEGRAM_USER_IDS", "").split(',') if x.strip().isdigit()]
 
+# --- FastAPI App Setup ---
 app = FastAPI()
 
-# Serve static frontend files
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
-app.mount("/static", StaticFiles(directory=frontend_path), name="static")
-
-# Serve index.html at root URL
-@app.get("/")
-def serve_index():
-    index_file_path = os.path.join(frontend_path, "index.html")
-    return FileResponse(index_file_path)
-
+# Allow CORS for all origins during development. Restrict in production.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Consider restricting this to your frontend domain in production (e.g., ["https://your-app.onrender.com"])
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class TextInput(BaseModel):
-    text: str
-
-# --- GOOGLE TTS CREDENTIALS HANDLING ---
-google_credentials_json_str = os.getenv("GOOGLE_CREDENTIALS_JSON")
-
-if google_credentials_json_str:
-    try:
-        temp_gcloud_key_file = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
-        temp_gcloud_key_file.write(google_credentials_json_str.encode('utf-8'))
-        temp_gcloud_key_file.close()
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_gcloud_key_file.name
-        print(f"Google Cloud credentials loaded from GOOGLE_CREDENTIALS_JSON environment variable to: {temp_gcloud_key_file.name}")
-    except Exception as e:
-        print(f"Error processing GOOGLE_CREDENTIALS_JSON environment variable: {e}")
-else:
-    print("GOOGLE_CREDENTIALS_JSON environment variable not found. Attempting local fallback for Google TTS.")
-    try:
-        local_key_path = os.path.join(os.path.dirname(__file__), "gcloud_key.json")
-        if os.path.exists(local_key_path):
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = local_key_path
-            print(f"Using local Google Cloud credentials from: {local_key_path}")
-        else:
-            print(f"Error: Local gcloud_key.json not found at {local_key_path}. Google TTS will likely not work.")
-    except Exception as e:
-        print(f"Error setting local GOOGLE_APPLICATION_CREDENTIALS: {e}")
-
+# --- Google Text-to-Speech Client ---
+# Ensure GOOGLE_APPLICATION_CREDENTIALS environment variable is set
+# pointing to your service account key file path on Render.
 tts_client = texttospeech.TextToSpeechClient()
 
-def text_to_speech(text: str) -> str:
-    """Converts text to speech using Google Cloud TTS and returns base64 encoded MP3 audio."""
+async def text_to_speech(text: str) -> bytes:
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
-        language_code="te-IN",
-        name="te-IN-Chirp3-HD-Achird",
-        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+        language_code="en-US",
+        name="en-US-Standard-C", # Or another suitable voice
+        ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
     )
-    audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
-    response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
-    return base64.b64encode(response.audio_content).decode('utf-8')
-
-# --- FACT-CHECKING FUNCTIONS ---
-
-# Function for Text Fact-Checking (uses OpenAI)
-async def perform_text_factcheck(input_text: str):
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a smart and honest Telugu-speaking fact checker. You speak like a well-informed, friendly human who mixes Telugu and English naturally. You never repeat yourself. Be accurate, clear, and real."
-        },
-        {
-            "role": "user",
-            "content": "మోదీ అమెరికా ప్రదాని"
-        },
-        {
-            "role": "assistant",
-            "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు జో బైడెన్. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
-        },
-        {
-            "role": "user",
-            "content": f"""
-You're given a statement in Telugu. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
-
-Statement:
-"{input_text}"
-
-Instructions:
-- Respond in clear, simple Telugu using its native script (తెలుగు లిపిలో) — use English only where needed.
-- Do not respond in bullet points. Write like you're explaining it to someone directly.
-- If the statement is false, explain why.
-- If it's true, provide some brief context or clarification.
-- If it's controversial, be honest and neutral. Don't dodge the question.
-- If you don't know, say so clearly.
-- Do not repeat yourself.
-- Use natural sentence flow like a real person would.
-"""
-        }
-    ]
-
-    ai_response = openai_client.chat.completions.create( # Using openai_client
-        model="o4-mini",
-        messages=messages
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MP3
     )
+    response = tts_client.synthesize_speech(
+        input=synthesis_input, voice=voice, audio_config=audio_config
+    )
+    return response.audio_content
 
-    fact_check_result = ai_response.choices[0].message.content
-    audio_base64 = text_to_speech(fact_check_result)
-    return {"result": fact_check_result, "audio_result": audio_base64}
-
-# Function for Audio Fact-Checking (uses OpenAI Whisper for transcription, then OpenAI chat for fact-check)
-async def perform_audio_factcheck(audio_file_path: str):
-    with open(audio_file_path, "rb") as audio_file:
-        transcript = openai_client.audio.transcriptions.create( # Using openai_client
-            model="whisper-1",
-            file=audio_file
+# --- OpenAI and Gemini API for Fact-Checking ---
+async def get_text_fact_check_response(text: str) -> str:
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o", # Or gpt-3.5-turbo if you prefer
+            messages=[
+                {"role": "system", "content": "You are an AI fact-checker. Analyze the given text for accuracy and provide a concise, factual summary or a verdict of true/false/misleading with a brief explanation. If you cannot determine, state that. Prioritize factual accuracy."},
+                {"role": "user", "content": f"Fact-check this: {text}"}
+            ],
+            max_tokens=200
         )
-        transcribed_text = transcript.text
+        return response.choices[0].message.content
+    except Exception as e:
+        # Simplified error handling for production (no verbose logs)
+        return f"Error during text fact-checking: {e}"
 
-    messages = [
-        {
-            "role": "system",
-            "content": "You are a smart and honest Telugu-speaking fact checker. You speak like a well-informed, friendly human who mixes Telugu and English naturally. You never repeat yourself. Be accurate, clear, and real."
-        },
-        {
-            "role": "user",
-            "content": "మోదీ అమెరికా ప్రదాని"
-        },
-        {
-            "role": "assistant",
-            "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు జో బైడెన్. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
-        },
-        {
-            "role": "user",
-            "content": f"""
-You're given a statement in Telugu. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
-
-Statement:
-"{transcribed_text}" # Using transcribed_text here
-
-Instructions:
-- Respond in clear, simple Telugu — use English only where needed.
-- Do not respond in bullet points. Write like you're explaining it to someone directly.
-- If the statement is false, explain why.
-- If it's true, provide some brief context or clarification.
-- If it's controversial, be honest and neutral. Don't dodge the question.
-- If you don't know, say so clearly.
-- Do not repeat yourself.
-- Use natural sentence flow like a real person would.
-"""
+async def perform_image_factcheck(image_bytes: bytes, caption: str = None) -> str:
+    async with httpx.AsyncClient() as client:
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY
         }
-    ]
 
-    ai_response = openai_client.chat.completions.create( # Using openai_client
-        model="o4-mini",
-        messages=messages
-    )
+        # Encode image to base64
+        base64_image = base64.b64encode(image_bytes).decode('utf-8')
 
-    fact_check_result = ai_response.choices[0].message.content
-    audio_base64_result = text_to_speech(fact_check_result)
-    return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
-
-# NEW Unified Function for Image Fact-Checking using Gemini (for Website AND Telegram)
-# Renamed from perform_image_factcheck_gemini to reflect its universal use.
-async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
-    # This function will be used by BOTH the website and the Telegram bot for image uploads
-    
-    # --- Robust Image Type Inference ---
-    guessed_type = imghdr.what(None, h=image_bytes)
-    
-    mime_type_for_gemini = None 
-    if guessed_type == 'jpeg':
-        mime_type_for_gemini = 'image/jpeg'
-    elif guessed_type == 'png':
-        mime_type_for_gemini = 'image/png'
-    elif guessed_type == 'gif':
-        mime_type_for_gemini = 'image/gif'
-    elif mime_type == 'image/webp': # WebP needs explicit check if imghdr doesn't catch
-        mime_type_for_gemini = 'image/webp'
-    
-    if not mime_type_for_gemini:
-        allowed_mime_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
-        if mime_type not in allowed_mime_types:
-            raise ValueError(f"Unsupported image MIME type received: {mime_type}. Allowed: {allowed_mime_types}")
-        mime_type_for_gemini = mime_type
-
-    print(f"DEBUG: Original MIME type from FastAPI (Image Fact-Check): {mime_type}")
-    print(f"DEBUG: Inferred MIME type for Gemini (Image Fact-Check): {mime_type_for_gemini}")
-    print(f"DEBUG: Image bytes length (Image Fact-Check): {len(image_bytes)}")
-        
-    if len(image_bytes) == 0:
-        raise ValueError("Empty image data received")
-    
-    b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    print(f"DEBUG: Base64 image length (Image Fact-Check): {len(b64_image)}")
-    print(f"DEBUG: Base64 preview (first 50 chars - Image Fact-Check): {b64_image[:50]}...")
-    # --- End Image Type Inference ---
-
-    # --- GEMINI API CALL ---
-    gemini_prompt_parts = [
-        {
-            "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.
-            
-            {f"Context provided: {caption}" if caption else "No additional context provided."}
-            
-            Instructions:
-            - Respond in clear, simple Telugu — use English only where needed.
-            - Do not respond in bullet points. Write like you're explaining it to someone directly.
-            - Analyze what you see in the image and determine if it appears authentic or manipulated.
-            - If you detect signs of manipulation, explain what you notice.
-            - If it appears genuine, provide context about what the image shows.
-            - If it's controversial or you're uncertain, be honest about limitations.
-            - Do not repeat yourself.
-            - Use natural sentence flow like a real person would.
-            """
-        },
-        {
-            "inlineData": {
-                "mimeType": mime_type_for_gemini,
-                "data": b64_image
-            }
-        }
-    ]
-
-    gemini_payload = {
-        "contents": [
-            {
-                "role": "user",
-                "parts": gemini_prompt_parts
-            }
-        ]
-        # REMOVED: "tools" section to disable Google Search grounding
-    }
-
-    try:
-        print("DEBUG: Sending request to Gemini API for image processing...")
-        print(f"DEBUG: Using Gemini model 'gemini-2.0-flash' for image processing (no grounding).")
-        
-        async with httpx.AsyncClient() as http_client:
-            gemini_response = await http_client.post(
-                f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
-                json=gemini_payload,
-                headers={"Content-Type": "application/json"}
-            )
-            gemini_response.raise_for_status() 
-        
-        gemini_result = gemini_response.json()
-        
-        fact_check_result = "No result text found."
-        citations = [] # Citations will no longer be available without grounding
-        if gemini_result.get('candidates') and len(gemini_result['candidates']) > 0 and \
-           gemini_result['candidates'][0].get('content') and \
-           gemini_result['candidates'][0]['content'].get('parts') and \
-           len(gemini_result['candidates'][0]['content']['parts']) > 0:
-            fact_check_result = gemini_result['candidates'][0]['content']['parts'][0].get('text', 'No result text found.')
-            
-            # Removed citation extraction as grounding is disabled
+        # Construct the parts for Gemini
+        parts = []
+        if caption:
+            parts.append({"text": f"Fact-check this image based on the caption: '{caption}'"})
         else:
-            print(f"DEBUG: Unexpected Gemini response structure for image: {gemini_result}")
+            parts.append({"text": "Fact-check this image. Is there anything misleading or false within the image content itself? Provide a concise factual analysis."})
 
-        print("DEBUG: Gemini request successful (Image Fact-Check)")
-        
-        # Generate TTS for the Gemini fact-check result
-        audio_base64 = text_to_speech(fact_check_result)
+        parts.append({
+            "inline_data": {
+                # Attempt to guess MIME type, fallback to common image/jpeg
+                "mime_type": imghdr.what(None, h=image_bytes) or mimetypes.guess_type('image.jpg')[0],
+                "data": base64_image
+            }
+        })
 
-        return {"result": fact_check_result, "audio_result": audio_base64, "sources": citations}
-    except httpx.HTTPStatusError as e:
-        error_message = f"Gemini API HTTP Error (Image Fact-Check): Status {e.response.status_code}, Response: {e.response.text}"
-        print(f"Error: {error_message}") 
-        raise ValueError(error_message) 
-    except json.JSONDecodeError as e:
-        error_message = f"Failed to parse Gemini API response as JSON: {e}"
-        print(f"Error: {error_message}")
-        raise ValueError(error_message)
-    except Exception as e:
-        error_message = f"An unexpected error occurred during Gemini image processing: {type(e).__name__}: {e}"
-        print(f"Error: {error_message}", exc_info=True)
-        raise ValueError(error_message)
+        data = {
+            "contents": [{
+                "parts": parts
+            }]
+        }
 
+        try:
+            gemini_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-vision:generateContent"
+            response = await client.post(gemini_url, headers=headers, json=data, timeout=30.0) # Add timeout
+            response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+            response_json = response.json()
+            return response_json['candidates'][0]['content']['parts'][0]['text']
+        except httpx.HTTPStatusError as e:
+            return f"Error contacting fact-checking service: {e.response.status_code} - {e.response.text}"
+        except httpx.RequestError as e:
+            return f"Network error contacting fact-checking service: {e}"
+        except Exception as e:
+            return f"An unexpected error occurred during image fact-check: {e}"
 
-# --- WEB APP ENDPOINTS ---
+# --- API Endpoints ---
+
+# Serves index.html directly from the root.
+# This assumes index.html is in the same directory as app.py.
+@app.get("/")
+async def read_root():
+    return FileResponse("index.html")
+
 @app.post("/factcheck/text")
-async def factcheck_text_web(input: TextInput):
+async def fact_check_text(request: Request):
     try:
-        response = await perform_text_factcheck(input.text)
-        return response
+        data = await request.json()
+        text = data.get("text")
+        if not text:
+            return JSONResponse(status_code=400, content={"error": "No text provided"})
+
+        result = await get_text_fact_check_response(text)
+        audio_result_b64 = None
+        if result:
+            audio_bytes = await text_to_speech(result)
+            audio_result_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+        return JSONResponse(content={"result": result, "audio_result": audio_result_b64})
     except Exception as e:
-        print(f"Error in web factcheck_text: {e}")
-        return {"error": str(e)}
+        return JSONResponse(status_code=500, content={"error": "Internal server error during text fact-check"})
 
 @app.post("/factcheck/audio")
-async def factcheck_audio_web(file: UploadFile = File(...)):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
+async def fact_check_audio(file: UploadFile = File(...)):
     try:
-        response = await perform_audio_factcheck(tmp_path)
-        return response
+        audio_bytes = await file.read()
+        # Use tempfile for handling audio, ensure cleanup
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_audio_file:
+            temp_audio_file.write(audio_bytes)
+        
+        # Open the file again for OpenAI API
+        with open(temp_audio_file.name, "rb") as audio_file_for_openai:
+            transcription_response = openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file_for_openai,
+                response_format="text"
+            )
+        transcription = transcription_response
+        os.unlink(temp_audio_file.name) # Clean up temp file
+
+        if not transcription:
+            return JSONResponse(status_code=500, content={"error": "Failed to transcribe audio"})
+
+        fact_check_result = await get_text_fact_check_response(transcription)
+        audio_result_b64 = None
+        if fact_check_result:
+            audio_bytes_tts = await text_to_speech(fact_check_result)
+            audio_result_b64 = base64.b64encode(audio_bytes_tts).decode('utf-8')
+
+        return JSONResponse(content={"transcription": transcription, "result": fact_check_result, "audio_result": audio_result_b64})
     except Exception as e:
-        print(f"Error in web factcheck_audio: {e}")
-        return {"error": str(e)}
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        return JSONResponse(status_code=500, content={"error": "Internal server error during audio fact-check"})
 
 @app.post("/factcheck/image")
-async def factcheck_image_web(
-    file: UploadFile = File(...),
-    caption: str = Form("")
-):
-    """
-    Fact-checks an image with an optional caption using Gemini's vision model for the website.
-    Includes robust file type and header validation.
-    """
+async def fact_check_image(file: UploadFile = File(...), caption: str = Form(None)):
     try:
-        if not file.content_type or not file.content_type.startswith('image/'):
-            return JSONResponse(
-                content={"error": f"Invalid file type. Expected image, got: {file.content_type}"}, 
-                status_code=400
-            )
-        
-        print(f"DEBUG: Received file from website - Name: {file.filename}, Content-Type: {file.content_type}, Size: {file.size}")
-        
         image_bytes = await file.read()
-        
-        if len(image_bytes) == 0:
-            return JSONResponse(
-                content={"error": "Empty file received"}, 
-                status_code=400
-            )
-            
-        print(f"DEBUG: Read {len(image_bytes)} bytes from uploaded file (Website)")
-        
-        if len(image_bytes) < 8: 
-            return JSONResponse(
-                content={"error": "File too small to be a valid image"}, 
-                status_code=400
-            )
-        
-        header = image_bytes[:12] 
-        is_valid_image = False
-        detected_format = "Unknown"
+        result = await perform_image_factcheck(image_bytes, caption)
 
-        if header.startswith(b'\x89PNG\r\n\x1a\n'):  
-            is_valid_image = True
-            detected_format = "PNG"
-        elif header.startswith(b'\xff\xd8\xff'):  
-            is_valid_image = True
-            detected_format = "JPEG"
-        elif header.startswith(b'GIF8'):  
-            is_valid_image = True
-            detected_format = "GIF"
-        elif header.startswith(b'RIFF') and len(image_bytes) >= 12 and image_bytes[8:12] == b'WEBP': 
-            is_valid_image = True
-            detected_format = "WebP"
-                
-        if not is_valid_image:
-            return JSONResponse(
-                content={"error": "File does not appear to be a valid image format"}, 
-                status_code=400
-            )
-            
-        print(f"DEBUG: Detected image format via magic number (Website): {detected_format}")
-        
-        # Call the unified Gemini-specific image processing function
-        response = await perform_image_factcheck(image_bytes, file.content_type, caption)
-        return JSONResponse(content=response)
-            
-    except ValueError as ve:
-        print(f"Validation error in factcheck_image_web: {ve}")
-        return JSONResponse(content={"error": str(ve)}, status_code=400)
+        audio_result_b64 = None
+        if result:
+            audio_bytes = await text_to_speech(result)
+            audio_result_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+
+        return JSONResponse(content={"result": result, "audio_result": audio_result_b64})
     except Exception as e:
-        print(f"Error in web factcheck_image: {e}")
-        return JSONResponse(content={"error": f"Internal server error: {str(e)}"}, status_code=500)
+        return JSONResponse(status_code=500, content={"error": "Internal server error during image fact-check"})
 
-@app.post("/factcheck/tts")
-async def generate_tts_web(input: TextInput):
-    try:
-        audio_base64 = text_to_speech(input.text)
-        return {"audio": audio_base64}
-    except Exception as e:
-        print(f"Error in web generate_tts: {e}")
-        return {"error": str(e)}
-
-
-# --- TELEGRAM BOT SETUP ---
-telegram_application = None # Initialize as None
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize bot components and set webhook when FastAPI app starts."""
-    global telegram_application # Declare global to assign
-
-    # Initialize bot components in the separate module
-    # Pass the unified Gemini image fact-check function for the Telegram bot
+# --- Telegram Webhook ---
+# Ensure telegram_bot_handlers.py is accessible at the same level as app.py
+if TELEGRAM_BOT_TOKEN:
+    telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
     telegram_bot_handlers.initialize_bot_components(
-        openai_client_instance=openai_client, 
+        openai_client_instance=openai_client,
         tts_func=text_to_speech,
         authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-        perform_image_factcheck_func=perform_image_factcheck # <--- IMPORTANT: Now using unified Gemini function
+        perform_image_factcheck_func=perform_image_factcheck
     )
 
-    if TELEGRAM_BOT_TOKEN:
-        telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-        await telegram_application.initialize()
-        
-        webhook_base_url = os.getenv("RENDER_SERVICE_URL")
-        
-        if webhook_base_url:
-            full_webhook_url = f"{webhook_base_url}/telegram-webhook"
-            print(f"Setting Telegram webhook to: {full_webhook_url}")
-            try:
-                await telegram_application.bot.set_webhook(url=full_webhook_url)
-                print("Telegram webhook set successfully.")
-            except Exception as webhook_e:
-                print(f"Error setting Telegram webhook: {webhook_e}")
-        else:
-            print("RENDER_SERVICE_URL not found. Webhook not set for production. Running in local polling mode (if __name__ is called).")
-    else:
-        print("TELEGRAM_BOT_TOKEN not found. Telegram bot functionality will not be active.")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Remove the webhook for the Telegram bot when the FastAPI app shuts down."""
-    if telegram_application and os.getenv("RENDER_SERVICE_URL"): 
-        print("Removing Telegram webhook...")
-        await telegram_application.shutdown()
-        print("Telegram webhook removed (via application shutdown).")
-
-# --- TELEGRAM WEBHOOK ENDPOINT ---
 @app.post("/telegram-webhook")
-async def telegram_webhook(request: Request) -> Response:
-    """Handle incoming Telegram updates."""
-    if not TELEGRAM_BOT_TOKEN or not telegram_application:
+async def telegram_webhook(request: Request):
+    if not TELEGRAM_BOT_TOKEN:
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content="Telegram bot not configured.")
 
     try:
         req_json = await request.json()
         update = Update.de_json(req_json, telegram_application.bot)
-        
-        if update: 
+
+        if update:
             await telegram_application.process_update(update)
         return Response(status_code=status.HTTP_200_OK)
     except Exception as e:
-        print(f"Error processing Telegram webhook: {e}")
         return Response(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# --- NEWS FEED SECTION (PostgreSQL Integration) ---
+
+class AddSourceRequest(BaseModel):
+    url: str
+    name: str
+
+# Database connection function for PostgreSQL
+def get_news_db_connection():
+    database_url = os.getenv("DATABASE_URL")
+    if not database_url:
+        # In a production environment, you might want to raise a more specific error or exit
+        raise ValueError("DATABASE_URL environment variable not set. News Feed functionality will not work without a database connection.")
+
+    result = urlparse(database_url)
+    username = result.username
+    password = result.password
+    database = result.path[1:]
+    hostname = result.hostname
+    port = result.port if result.port else 5432 # Default PostgreSQL port
+
+    conn = psycopg2.connect(
+        database=database,
+        user=username,
+        password=password,
+        host=hostname,
+        port=port
+    )
+    return conn
+
+# Database initialization for PostgreSQL
+def init_news_db():
+    try:
+        with get_news_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS sources (
+                        id SERIAL PRIMARY KEY,
+                        url TEXT NOT NULL UNIQUE,
+                        name TEXT NOT NULL,
+                        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS articles (
+                        id SERIAL PRIMARY KEY,
+                        source_id INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        link TEXT NOT NULL UNIQUE,
+                        pub_date TEXT,
+                        fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE
+                    )
+                ''')
+                conn.commit()
+    except Exception as e:
+        # It's crucial to handle DB initialization errors, as the app won't function
+        raise RuntimeError(f"Failed to initialize PostgreSQL database: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    # Initialize the PostgreSQL database for news feeds
+    init_news_db()
+    # The Telegram bot local polling is handled in the __main__ block for local dev
+    # On Render, it's driven by webhooks, so no polling setup needed here.
+    pass
+
+@app.post("/news/add_source")
+async def add_news_source(source_data: AddSourceRequest):
+    try:
+        with get_news_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT INTO sources (url, name) VALUES (%s, %s)", (source_data.url, source_data.name))
+            conn.commit()
+        return JSONResponse(content={"message": "News source added successfully!"}, status_code=200)
+    except psycopg2.errors.UniqueViolation:
+        return JSONResponse(content={"error": "This news source URL already exists."}, status_code=409)
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to add news source: {e}"})
+
+@app.get("/news/articles")
+async def get_news_articles():
+    all_articles = []
+    try:
+        with get_news_db_connection() as conn:
+            # Use DictCursor to easily access columns by name
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute("SELECT id, url, name FROM sources")
+                sources = cur.fetchall()
+
+                for source in sources:
+                    source_id = source['id']
+                    source_name = source['name']
+                    source_url = source['url']
+
+                    one_hour_ago = datetime.now() - timedelta(hours=1)
+                    cur.execute(
+                        "SELECT title, link, pub_date FROM articles WHERE source_id = %s AND fetched_at > %s",
+                        (source_id, one_hour_ago.isoformat())
+                    )
+                    cached_articles = cur.fetchall()
+
+                    if cached_articles:
+                        for article in cached_articles:
+                            all_articles.append({
+                                "title": article['title'],
+                                "link": article['link'],
+                                "source": source_name,
+                                "pubDate": article['pub_date']
+                            })
+                        continue # Move to the next source
+
+                    # If not cached or cache expired, fetch fresh
+                    feed = feedparser.parse(source_url)
+
+                    # Handle bozo feeds gracefully (parsing errors)
+                    if feed.bozo:
+                        # Log the bozo exception if needed for debugging, but don't stop process
+                        pass
+
+                    if not feed.entries:
+                        # Add a placeholder for sources with no entries
+                        all_articles.append({
+                            "title": f"No articles available from {source_name}", # Removed URL from message
+                            "link": "#",
+                            "source": source_name,
+                            "pubDate": None
+                        })
+                        continue
+
+                    # Clear old articles for this source before inserting new ones
+                    cur.execute("DELETE FROM articles WHERE source_id = %s", (source_id,))
+
+                    for entry in feed.entries:
+                        title = entry.title
+                        link = entry.link
+                        pub_date_str = None
+
+                        # Attempt to get a robust published date in ISO format
+                        if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                            try:
+                                pub_date_str = datetime(*entry.published_parsed[:6]).isoformat() + "Z"
+                            except (TypeError, ValueError):
+                                pass # Fallback if datetime conversion fails
+
+                        # If parsing failed, try raw published attribute or updated
+                        if not pub_date_str:
+                            pub_date_str = getattr(entry, 'published', getattr(entry, 'updated', None))
+
+                        all_articles.append({
+                            "title": title,
+                            "link": link,
+                            "source": source_name,
+                            "pubDate": pub_date_str
+                        })
+
+                        # Insert into cache, handle potential duplicates
+                        try:
+                            cur.execute("INSERT INTO articles (source_id, title, link, pub_date, fetched_at) VALUES (%s, %s, %s, %s, %s)",
+                                          (source_id, title, link, pub_date_str, datetime.now().isoformat()))
+                            conn.commit()
+                        except psycopg2.errors.UniqueViolation:
+                            conn.rollback() # Rollback current transaction if duplicate link exists
+                        except Exception:
+                            conn.rollback()
+
+            # Sort all articles by date, newest first. Handle cases where pubDate might be None.
+            # Articles with None pubDate will be placed at the very end (datetime.min)
+            all_articles.sort(key=lambda x: datetime.fromisoformat(x['pubDate'].replace('Z', '')) if x['pubDate'] else datetime.min, reverse=True)
+
+            return JSONResponse(content={"articles": all_articles}, status_code=200)
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": f"Failed to fetch news articles: {e}"})
 
 # --- Main execution block ---
 if __name__ == "__main__":
+    import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"): 
-        print("Running Telegram bot in local polling mode...")
-        # from telegram import Update # Not needed here, only for webhook
-        telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-        telegram_bot_handlers.initialize_bot_components(
-            openai_client_instance=openai_client, 
-            tts_func=text_to_speech,
-            authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-            perform_image_factcheck_func=perform_image_factcheck # <--- IMPORTANT: Now using unified Gemini function
-        )
-        telegram_application.run_polling(poll_interval=1)
+
+    # This block handles local Telegram bot polling.
+    # It will be skipped when RENDER_SERVICE_URL is set (i.e., on Render deployment).
+    if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"):
+        # The telegram_application needs to be initialized here for local polling to work.
+        # Ensure telegram_application is defined in this scope.
+        # This setup should match how you initialize it in telegram_bot_handlers.py
+        if 'telegram_application' not in locals(): # Check if it's already defined
+             telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
+             telegram_bot_handlers.initialize_bot_components(
+                 openai_client_instance=openai_client,
+                 tts_func=text_to_speech,
+                 authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
+                 perform_image_factcheck_func=perform_image_factcheck
+             )
+        telegram_application.run_polling(poll_interval=3.0)
     else:
-        print("Running Uvicorn server for web app and webhook endpoint...")
-        uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+        # This block runs the FastAPI app, for Render deployment or if Telegram bot is not configured locally.
+        uvicorn.run(app, host="0.0.0.0", port=port)

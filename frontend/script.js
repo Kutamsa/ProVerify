@@ -7,15 +7,25 @@ const recordBtn = document.getElementById("recordBtn");
 const recordLabel = document.getElementById("recordLabel");
 const audioPlayer = document.getElementById("player"); // Renamed for clarity
 
+// NEW DOM Elements for News Feed
+const rssUrlInput = document.getElementById("rssUrlInput");
+const sourceNameInput = document.getElementById("sourceNameInput");
+const addSourceBtn = document.getElementById("addSourceBtn");
+const articlesList = document.getElementById("articlesList");
+const newsArticlesContainer = document.getElementById("newsArticlesContainer");
+
 const BASE_URL = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost"
     ? "http://127.0.0.1:8000"
     : "https://proverify.onrender.com"; // <-- Update this if your Render URL changes!
 
-const modes = ["voiceMode", "textMode", "imageMode"];
+const modes = ["voiceMode", "textMode", "imageMode", "newsFeedMode"]; // Added newsFeedMode (assuming you might have a button for it)
 
 function showMode(modeId) {
     modes.forEach(mode => {
-        document.getElementById(mode).style.display = (mode === modeId) ? "block" : "none";
+        const element = document.getElementById(mode);
+        if (element) { // Check if the element exists in the DOM
+            element.style.display = (mode === modeId) ? "block" : "none";
+        }
     });
     resultOutput.textContent = "Fact checked results will appear here..."; // Reset result text
     transcriptionText.textContent = "(No transcription yet)"; // Reset transcription text
@@ -237,13 +247,12 @@ async function uploadImage() {
         const data = await response.json();
         resultOutput.textContent = data.result || data.error || "Unknown error";
 
-        // --- ADDED: Play the audio result for image fact-check ---
+        // Play the audio result if available
         if (data.audio_result) {
             playBase64Audio(data.audio_result);
         } else if (data.error) {
             showMessageBox(`Error: ${data.error}`);
         }
-        // --- END ADDED ---
 
     } catch (err) {
         console.error("Image upload error:", err);
@@ -309,7 +318,96 @@ function showMessageBox(message) {
 }
 
 
-// Initialize the first mode on page load
+// NEWS FEED FUNCTIONALITY
+// Function to add a news source
+async function addNewsSource() {
+    const rssUrl = rssUrlInput.value.trim();
+    const sourceName = sourceNameInput.value.trim();
+
+    if (!rssUrl || !sourceName) {
+        showMessageBox("Please enter both a URL/RSS feed and a source name.");
+        return;
+    }
+
+    // Basic URL validation
+    try {
+        new URL(rssUrl);
+    } catch (e) {
+        showMessageBox("Please enter a valid URL.");
+        return;
+    }
+
+    addSourceBtn.textContent = "Adding...";
+    addSourceBtn.disabled = true;
+
+    try {
+        const response = await fetch(`${BASE_URL}/news/add_source`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: rssUrl, name: sourceName }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            showMessageBox("News source added successfully!");
+            rssUrlInput.value = ""; // Clear input fields
+            sourceNameInput.value = "";
+            fetchNewsArticles(); // Refresh articles after adding a new source
+        } else {
+            showMessageBox(`Failed to add source: ${data.error || "Unknown error"}`);
+        }
+    } catch (err) {
+        console.error("Add news source error:", err);
+        showMessageBox("Failed to connect to the server to add news source. Please try again.");
+    } finally {
+        addSourceBtn.textContent = "Add Source";
+        addSourceBtn.disabled = false;
+    }
+}
+
+// Function to fetch and display news articles
+async function fetchNewsArticles() {
+    // Check if articlesList element exists before trying to modify it
+    if (!articlesList) {
+        console.warn("articlesList element not found. News feed functionality might not display correctly.");
+        return;
+    }
+
+    articlesList.innerHTML = '<li>Loading news articles...</li>'; // Show loading state
+
+    try {
+        const response = await fetch(`${BASE_URL}/news/articles`);
+        const data = await response.json();
+
+        if (response.ok && data.articles) {
+            if (data.articles.length === 0) {
+                articlesList.innerHTML = '<li>No news articles found. Add RSS feeds or website URLs above.</li>';
+            } else {
+                articlesList.innerHTML = ''; // Clear previous articles
+                data.articles.forEach(article => {
+                    const listItem = document.createElement('li');
+                    listItem.innerHTML = `
+                        <a href="${article.link}" target="_blank" rel="noopener noreferrer">${article.title}</a>
+                        ${article.source ? `<span> - ${article.source}</span>` : ''}
+                        ${article.pubDate ? `<span> (${new Date(article.pubDate).toLocaleDateString()})</span>` : ''}
+                    `;
+                    articlesList.appendChild(listItem);
+                });
+            }
+        } else {
+            articlesList.innerHTML = `<li>Error fetching news: ${data.error || "Unknown error"}</li>`;
+            showMessageBox(`Error fetching news: ${data.error || "Unknown error"}`);
+        }
+    } catch (err) {
+        console.error("Fetch news articles error:", err);
+        articlesList.innerHTML = '<li>Unable to load news articles. Network error or server issue.</li>';
+        showMessageBox("Failed to fetch news articles. Please try again.");
+    }
+}
+
+// Initialize the first mode and fetch news on page load
 document.addEventListener("DOMContentLoaded", () => {
-    showMode('voiceMode');
+    showMode('voiceMode'); // Or your preferred default mode
+    fetchNewsArticles(); // Fetch news when the page loads
 });

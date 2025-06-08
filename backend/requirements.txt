@@ -6,3 +6,5 @@ python-dotenv==1.0.1
 httpx==0.27.0  # CHANGED THIS LINE TO SATISFY python-telegram-bot
 python-telegram-bot==21.0
 pydub==0.25.1
+feedparser
+psycopg2-binary
