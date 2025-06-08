@@ -9,13 +9,13 @@ from google.cloud import texttospeech
 from fastapi import FastAPI, UploadFile, File, Form, Request, Response, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.staticfiles import StaticFiles # Ensure this is imported
 from pydantic import BaseModel
 from openai import OpenAI
 from dotenv import load_dotenv
 import json
 import httpx
-from contextlib import asynccontextmanager # Import for lifespan
+from contextlib import asynccontextmanager
 
 from . import telegram_bot_handlers
 from telegram import Update
@@ -102,7 +102,7 @@ async def lifespan(app: FastAPI):
         os.remove(temp_google_credentials_path)
         print(f"Cleaned up temporary Google credentials file: {temp_google_credentials_path}")
 
-app = FastAPI(lifespan=lifespan) # Pass the lifespan to the FastAPI app
+app = FastAPI(lifespan=lifespan)
 
 # --- CORS Middleware ---
 app.add_middleware(
@@ -114,14 +114,9 @@ app.add_middleware(
 )
 
 # --- Static Files (HTML, CSS, JS) ---
-# IMPORTANT: This setup serves ALL files from the current working directory.
-# For security and best practice, it's highly recommended to use a dedicated 'static' folder
-# inside your 'frontend' directory and map it properly.
-# Example:
-# from os.path import join, dirname, abspath
-# FRONTEND_DIR = join(dirname(abspath(__file__)), "..", "frontend") # Assuming app.py is in backend/
-# app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
-app.mount("/static", StaticFiles(directory="."), name="static")
+# IMPORTANT CHANGE HERE:
+# Mount the 'static' directory explicitly
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 # --- Database Initialization (PostgreSQL) ---
@@ -245,15 +240,13 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
         "data": base64.b64encode(image_data).decode("utf-8")
     })
 
-    # FIX 2: Using Gemini model 'gemini-2.0-flash' for image processing
-    model_name = "gemini-2.0-flash" # Changed to gemini-2.0-flash
+    model_name = "gemini-2.0-flash"
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
 
     headers = {
         "Content-Type": "application/json"
     }
 
-    # Construct the prompt for Gemini
     prompt_parts = [
         {"text": "Analyze the following image for any factual inaccuracies, misleading content, or provide context if it's being used deceptively. Be neutral and precise. If there's a caption, consider it in your analysis."},
         {"inline_data": image_parts[0]},
@@ -274,9 +267,8 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(gemini_url, headers=headers, json=data, timeout=30.0)
-            response.raise_for_status() # Raise an exception for 4xx or 5xx responses
+            response.raise_for_status()
             response_data = response.json()
-            # Extract the text content from the response
             if response_data and "candidates" in response_data and len(response_data["candidates"]) > 0:
                 first_candidate = response_data["candidates"][0]
                 if "content" in first_candidate and "parts" in first_candidate["content"]:
@@ -295,7 +287,8 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
 # --- FastAPI Endpoints ---
 @app.get("/")
 async def read_root():
-    return FileResponse('index.html')
+    # IMPORTANT CHANGE HERE: Serve index.html from the 'static' directory
+    return FileResponse('static/index.html')
 
 @app.post("/factcheck/audio")
 async def factcheck_audio(audio_file: UploadFile = File(...)):
@@ -309,7 +302,6 @@ async def factcheck_audio(audio_file: UploadFile = File(...)):
     if not audio_response:
         return JSONResponse(status_code=500, content={"error": "Failed to synthesize audio response."})
 
-    # Return transcription, fact-check text, and audio
     return JSONResponse(content={
         "transcription": transcription,
         "factCheckResult": fact_check_result,
@@ -485,10 +477,8 @@ async def fetch_and_store_news(source_id: int):
         feed = feedparser.parse(source['url'])
         if feed.bozo:
             if hasattr(feed.bozo_exception, 'status'):
-                # Handle HTTP errors during feed fetch
                 return JSONResponse(status_code=feed.bozo_exception.status, content={"error": f"Error fetching RSS feed: HTTP {feed.bozo_exception.status}"})
             else:
-                # General parsing error
                 return JSONResponse(status_code=500, content={"error": f"Error parsing RSS feed: {feed.bozo_exception}"})
 
         new_articles_count = 0
@@ -500,25 +490,21 @@ async def fetch_and_store_news(source_id: int):
                 pub_date = datetime(*entry.published_parsed[:6])
             
             try:
-                # Check if article already exists to prevent duplicates
                 cur.execute("INSERT INTO articles (source_id, title, link, pub_date) VALUES (%s, %s, %s, %s) ON CONFLICT (link) DO NOTHING;",
                             (source['id'], title, link, pub_date))
-                if cur.rowcount > 0: # rowcount > 0 means a new row was inserted
+                if cur.rowcount > 0:
                     new_articles_count += 1
             except Exception as e:
-                # Log any other database errors but continue processing other articles
                 print(f"Error inserting article {link}: {e}")
-                # FIX 4: Removed conn.rollback() and autocommit toggling from inside the loop.
-                pass # Continue with next entry
+                pass
 
-        conn.commit() # Commit all successful insertions
+        conn.commit()
         cur.execute("UPDATE sources SET last_fetched = CURRENT_TIMESTAMP WHERE id = %s;", (source_id,))
         conn.commit()
 
         return JSONResponse(status_code=200, content={"message": f"Fetched and stored {new_articles_count} new articles for {source['name']}."})
 
     except Exception as e:
-        # FIX 5: Ensure rollback on general errors for the entire function scope
         if conn:
             conn.rollback() 
         print(f"Error in fetch_and_store_news for source_id {source_id}: {e}")
@@ -531,7 +517,6 @@ async def fetch_and_store_news(source_id: int):
 # --- Telegram Bot Webhook (Optional, for Render deployment) ---
 @app.post("/telegram-webhook")
 async def telegram_webhook(request: Request):
-    # FIX 3: Robust check for telegram_application
     if not TELEGRAM_BOT_TOKEN or not telegram_application:
         return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content="Telegram bot not configured or initialized.")
     try:
@@ -550,13 +535,11 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
 
-    # FIX 3: Always run uvicorn for the FastAPI app, conditionally run Telegram polling
     if TELEGRAM_BOT_TOKEN and not RENDER_SERVICE_URL:
-        if telegram_application: # Check if it was successfully initialized globally
+        if telegram_application:
             print("Running Telegram bot in local polling mode...")
             telegram_application.run_polling(poll_interval=1.0)
         else:
             print("Telegram bot token set, but initialization failed. Cannot run polling.")
     
-    # Always run uvicorn for the FastAPI app, regardless of Telegram bot setup
     uvicorn.run(app, host="0.0.0.0", port=port)
