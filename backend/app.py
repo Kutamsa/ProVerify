@@ -29,9 +29,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) 
 
 # --- Gemini API Config (for Website Image Processing ONLY) ---
-# For Gemini API, the API key is automatically provided by Canvas runtime if left empty.
-# If you are deploying this outside Canvas or need a specific key, you'd set it here.
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Leave this empty for Canvas, or put your Gemini API key here
+# For Canvas runtime, GEMINI_API_KEY can be an empty string, as Canvas injects it.
+# For Render deployment, it MUST be read from environment variables.
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") # Read from environment variable
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # --- TELEGRAM BOT CONFIG ---
@@ -272,7 +272,22 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
     # --- GEMINI API CALL ---
     gemini_prompt_parts = [
         {
-            "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.{f"Context provided: {caption}" if caption else "No additional context provided."}Instructions:- Respond in clear, simple Telugu — use English only where needed.- Do not respond in bullet points. Write like you're explaining it to someone directly.- Analyze what you see in the image and determine if it appears authentic or manipulated.- If you detect signs of manipulation, explain what you notice.- If it appears genuine, provide context about what the image shows.- If it's controversial or you're uncertain, be honest about limitations.- Do not repeat yourself.- Use natural sentence flow like a real person would."""
+            "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.
+            
+            {f"Context provided: {caption}" if caption else "No additional context provided."}
+            
+            Instructions:
+            - Respond in clear, simple Telugu — use English only where needed.
+            - Do not respond in bullet points. Write like you're explaining it to someone directly.
+            - **Use Google Search to verify any factual claims or contexts related to the image.**
+            - Analyze what you see in the image and determine if it appears authentic or manipulated.
+            - If you detect signs of manipulation, explain what you notice.
+            - If it appears genuine, provide context about what the image shows.
+            - **If you use external sources, provide the URLs of those sources as a numbered list at the end of your response.**
+            - If it's controversial or you're uncertain, be honest about limitations.
+            - Do not repeat yourself.
+            - Use natural sentence flow like a real person would.
+            """
         },
         {
             "inlineData": {
@@ -287,6 +302,11 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
             {
                 "role": "user",
                 "parts": gemini_prompt_parts
+            }
+        ],
+        "tools": [ # Add this to enable Google Search grounding
+            {
+                "googleSearch": {}
             }
         ]
     }
@@ -306,16 +326,28 @@ async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, cap
         gemini_result = gemini_response.json()
         
         fact_check_result = "No result text found."
+        citations = []
         if gemini_result.get('candidates') and len(gemini_result['candidates']) > 0 and \
            gemini_result['candidates'][0].get('content') and \
            gemini_result['candidates'][0]['content'].get('parts') and \
            len(gemini_result['candidates'][0]['content']['parts']) > 0:
             fact_check_result = gemini_result['candidates'][0]['content']['parts'][0].get('text', 'No result text found.')
+            
+            # Extract citation metadata if available
+            if gemini_result['candidates'][0].get('citationMetadata') and \
+               gemini_result['candidates'][0]['citationMetadata'].get('citations'):
+                for citation in gemini_result['candidates'][0]['citationMetadata']['citations']:
+                    if citation.get('uri'):
+                        citations.append(citation['uri'])
         else:
             print(f"DEBUG: Unexpected Gemini response structure for website image: {gemini_result}")
 
         print("DEBUG: Gemini request successful (Website)")
-        return {"result": fact_check_result}
+        
+        # Generate TTS for the Gemini fact-check result
+        audio_base64 = text_to_speech(fact_check_result)
+
+        return {"result": fact_check_result, "audio_result": audio_base64, "sources": citations}
     except httpx.HTTPStatusError as e:
         print(f"Error calling Gemini API for website image (HTTP Error): {e.response.status_code} - {e.response.text}")
         raise ValueError(f"Gemini API HTTP Error (Website): {e.response.status_code} - {e.response.text}")
