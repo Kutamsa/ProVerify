@@ -1,0 +1,36 @@
+# This file defines your Render service configuration.
+# Place this file in the root of your project directory.
+
+services:
+  - type: web
+    name: ProVerify-backend # Choose a unique name for your Render service
+    env: python
+    
+    # The build command runs before your service starts.
+    # We're installing ffmpeg here, which is required by pydub for audio conversion.
+    # apt-get is common on Debian-based systems that Render typically uses for Python runtimes.
+    buildCommand: |
+      apt-get update -y
+      apt-get install -y ffmpeg
+      pip install -r backend/requirements.txt
+      
+    # The start command tells Render how to run your FastAPI application.
+    # It assumes your app.py is in the 'backend' directory.
+    startCommand: uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    
+    # Environment variables that your application needs.
+    # These should be set in Render's dashboard for security and flexibility.
+    # 'sync: false' means they are managed manually in Render UI, not committed to git.
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false # Set this value manually in Render dashboard
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false # Set this value manually in Render dashboard (entire JSON content)
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false # Set this value manually in Render dashboard
+      - key: AUTHORIZED_TELEGRAM_USER_IDS
+        sync: false # Set this value manually in Render dashboard (e.g., "12345,67890")
+
+    # Optional: If your project files are not at the root of your Git repo,
+    # specify the directory containing 'backend', 'frontend', and 'Procfile' here.
+    # rootDirectory: ./your-project-subfolder
