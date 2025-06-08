@@ -127,7 +127,7 @@ Statement:
 "{input_text}"
 
 Instructions:
-- Respond in clear, simple Telugu — use English only where needed.
+- Respond in clear, simple Telugu using its native script (తెలుగు లిపిలో) — use English only where needed.
 - Do not respond in bullet points. Write like you're explaining it to someone directly.
 - If the statement is false, explain why.
 - If it's true, provide some brief context or clarification.

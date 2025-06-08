@@ -20,6 +20,12 @@ function showMode(modeId) {
     resultOutput.textContent = "Fact checked results will appear here..."; // Reset result text
     transcriptionText.textContent = "(No transcription yet)"; // Reset transcription text
     transcriptionBox.style.display = "none"; // Hide transcription box initially
+    // Also stop any currently playing audio when switching modes
+    if (audioPlayer) {
+        audioPlayer.pause();
+        audioPlayer.src = "";
+        audioPlayer.style.display = "none";
+    }
 }
 
 // TEXT FACT CHECKING
@@ -230,9 +236,15 @@ async function uploadImage() {
 
         const data = await response.json();
         resultOutput.textContent = data.result || data.error || "Unknown error";
-        if (data.error) {
+
+        // --- ADDED: Play the audio result for image fact-check ---
+        if (data.audio_result) {
+            playBase64Audio(data.audio_result);
+        } else if (data.error) {
             showMessageBox(`Error: ${data.error}`);
         }
+        // --- END ADDED ---
+
     } catch (err) {
         console.error("Image upload error:", err);
         resultOutput.textContent = "Unable to process image. Network error or server issue.";
@@ -246,13 +258,21 @@ function removeImageFile() {
     document.getElementById("imageInput").value = "";
     // If you had an image preview, you'd clear it here
     resultOutput.textContent = "Fact checked results will appear here...";
+    // Stop any playing audio when removing the image
+    if (audioPlayer) {
+        audioPlayer.pause();
+        audioPlayer.src = "";
+        audioPlayer.style.display = "none";
+    }
 }
 
 // Helper function to play base64 audio
 function playBase64Audio(base64Audio) {
     try {
-        const audio = new Audio("data:audio/mp3;base64," + base64Audio);
-        audio.play().catch(e => console.error("Audio playback error:", e));
+        // Ensure the audio player is visible if it was hidden
+        audioPlayer.style.display = "block";
+        audioPlayer.src = "data:audio/mp3;base64," + base64Audio;
+        audioPlayer.play().catch(e => console.error("Audio playback error:", e));
     } catch (e) {
         console.error("Failed to create audio object:", e);
     }
