@@ -189,6 +189,7 @@ Instructions:
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
 async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
+    print(f"DEBUG: Received MIME type in perform_image_factcheck: {mime_type}")
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     messages = [
         {

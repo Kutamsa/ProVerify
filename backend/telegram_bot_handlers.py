@@ -2,6 +2,7 @@ import os
 import io
 import base64
 import tempfile
+import mimetypes # <--- NEW: Import mimetypes for inferring MIME types
 from pydub import AudioSegment
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -37,7 +38,6 @@ def is_authorized(user_id: int) -> bool:
 
 async def _perform_text_factcheck_bot(input_text: str):
     """Performs text fact-check using the shared OpenAI client."""
-    # --- START CHANGES FOR NEW PROMPT STRUCTURE ---
     messages = [
         {
             "role": "system",
@@ -71,7 +71,6 @@ Instructions:
 """
         }
     ]
-    # --- END CHANGES FOR NEW PROMPT STRUCTURE ---
     ai_response = _openai_client.chat.completions.create(
         model="o4-mini", # Model is set to o4-mini
         temperature=0.2,
@@ -90,7 +89,6 @@ async def _perform_audio_factcheck_bot(audio_file_path: str):
         )
         transcribed_text = transcript.text
 
-    # --- START CHANGES FOR NEW PROMPT STRUCTURE ---
     messages = [
         {
             "role": "system",
@@ -124,7 +122,6 @@ Instructions:
 """
         }
     ]
-    # --- END CHANGES FOR NEW PROMPT STRUCTURE ---
 
     ai_response = _openai_client.chat.completions.create(
         model="o4-mini", # Model is set to o4-mini
@@ -142,9 +139,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Sends a message when the command /start is issued."""
     user_id = update.effective_user.id
     if is_authorized(user_id):
-        # FIX: Changed reply_html to reply_text to avoid HTML parsing errors
         await update.message.reply_text(
-            f"Hello {update.effective_user.first_name}! 👋\n" # Using first_name, mention_html needs specific parsing
+            f"Hello {update.effective_user.first_name}! 👋\n"
             "I am your Fact-Checking bot. Send me text, a voice message, or a photo to fact-check it. "
             "You can also use /factcheck_text <your_text>."
         )
@@ -155,7 +151,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Sends a message when the command /help is issued."""
     user_id = update.effective_user.id
     if is_authorized(user_id):
-        # FIX: Changed reply_html to reply_text to avoid HTML parsing errors
         await update.message.reply_text(
             "Send me text to fact-check.\n"
             "Send me a voice message to get a transcription and fact-check.\n"
@@ -244,7 +239,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             photo_bytes = await photo_file.download_as_bytearray()
             
             caption = message.caption if message.caption else ""
-            mime_type = "image/jpeg" # Common type for Telegram photos
+
+            # --- FIX: Dynamically determine MIME type for image uploads ---
+            _, file_extension = os.path.splitext(photo_file.file_path)
+            inferred_mime_type, _ = mimetypes.guess_type(f"dummy{file_extension}")
+            # Fallback to image/jpeg if inference fails or it's not an image type
+            mime_type = inferred_mime_type if inferred_mime_type and inferred_mime_type.startswith('image/') else "image/jpeg"
+            print(f"Inferred MIME type for image: {mime_type}") # For debugging
+            # --- END FIX ---
 
             # The perform_image_factcheck_func (from app.py) already has the desired prompt structure
             response = await _perform_image_factcheck_function(bytes(photo_bytes), mime_type, caption)
