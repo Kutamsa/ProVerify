@@ -59,6 +59,22 @@ function showMode(modeId) {
         }
     });
 
+    // Stop recording and audio playback if active
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+        recordBtn.textContent = "🎤"; // Ensure mic symbol
+        recordBtn.classList.remove("recording");
+        recordLabel.textContent = "Click to Record";
+    }
+    if (!audioPlayer.paused) {
+        audioPlayer.pause();
+        audioPlayer.src = ''; // Clear audio source
+    }
+    loadingSpinner.style.display = "none"; // Hide spinner
+    resultOutput.textContent = "Fact checked results will appear here..."; // Reset results
+    transcriptionBox.style.display = "none";
+    transcriptionText.textContent = "(No transcription yet)";
+
     // Update active class for buttons
     document.querySelectorAll('.mode-buttons-row button').forEach(button => {
         if (button.onclick.toString().includes(`showMode('${modeId}')`)) {
@@ -67,12 +83,6 @@ function showMode(modeId) {
             button.classList.remove('active');
         }
     });
-
-    // Reset results when changing mode
-    resultOutput.textContent = "Fact checked results will appear here...";
-    transcriptionBox.style.display = "none";
-    transcriptionText.textContent = "(No transcription yet)";
-    loadingSpinner.style.display = "none";
 }
 
 // --- Voice Mode Functions ---
@@ -98,6 +108,7 @@ async function toggleRecording() {
                 loadingSpinner.style.display = "block";
                 resultOutput.textContent = ""; // Clear previous results
                 transcriptionBox.style.display = "none"; // Hide transcription during upload
+                recordLabel.textContent = "Processing..."; // Keep processing message
 
                 const formData = new FormData();
                 formData.append("audio_file", audioBlob, "recording.mp3");
@@ -108,7 +119,8 @@ async function toggleRecording() {
                         body: formData,
                     });
                     const data = await response.json();
-                    loadingSpinner.style.display = "none";
+                    loadingSpinner.style.display = "none"; // Hide spinner after process completion
+                    recordLabel.textContent = "Click to Record"; // Clear processing message
 
                     if (response.ok) {
                         transcriptionText.textContent = data.transcription;
@@ -127,7 +139,8 @@ async function toggleRecording() {
                     }
                 } catch (error) {
                     console.error("Error during audio fact-check:", error);
-                    loadingSpinner.style.display = "none";
+                    loadingSpinner.style.display = "none"; // Hide spinner
+                    recordLabel.textContent = "Click to Record"; // Clear processing message
                     resultOutput.textContent = "Error: Could not connect to server.";
                     showMessageBox("Failed to connect to server.", true);
                 }
@@ -164,7 +177,7 @@ async function submitText() {
             body: JSON.stringify({ text: inputText }),
         });
         const data = await response.json();
-        loadingSpinner.style.display = "none";
+        loadingSpinner.style.display = "none"; // Hide spinner after process completion
 
         if (response.ok) {
             resultOutput.textContent = data.factCheckResult;
@@ -181,7 +194,7 @@ async function submitText() {
         }
     } catch (error) {
         console.error("Error during text fact-check:", error);
-        loadingSpinner.style.display = "none";
+        loadingSpinner.style.display = "none"; // Hide spinner
         resultOutput.textContent = "Error: Could not connect to server.";
         showMessageBox("Failed to connect to server.", true);
     }
@@ -220,7 +233,7 @@ async function uploadImage() {
             body: formData,
         });
         const data = await response.json();
-        loadingSpinner.style.display = "none";
+        loadingSpinner.style.display = "none"; // Hide spinner after process completion
 
         if (response.ok) {
             resultOutput.textContent = data.factCheckResult;
@@ -237,7 +250,7 @@ async function uploadImage() {
         }
     } catch (error) {
         console.error("Error during image fact-check:", error);
-        loadingSpinner.style.display = "none";
+        loadingSpinner.style.display = "none"; // Hide spinner
         resultOutput.textContent = "Error: Could not connect to server.";
         showMessageBox("Failed to connect to server.", true);
     }
@@ -405,7 +418,7 @@ async function fetchNewsArticles(sourceId = null, append = false) {
     try {
         const response = await fetch(url);
         const data = await response.json();
-        loadingSpinner.style.display = "none";
+        loadingSpinner.style.display = "none"; // Hide spinner after process completion
 
         if (response.ok) {
             if (!append) {
@@ -444,7 +457,7 @@ async function fetchNewsArticles(sourceId = null, append = false) {
             loadMoreBtn.style.display = 'none';
         }
     } catch (err) {
-        loadingSpinner.style.display = "none";
+        loadingSpinner.style.display = "none"; // Hide spinner
         console.error("Fetch news articles error:", err);
         articlesList.innerHTML = '<li>Unable to load news articles. Network error or server issue.</li>';
         showMessageBox("Failed to fetch news articles. Please try again.", true);

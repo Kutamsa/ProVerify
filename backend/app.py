@@ -187,9 +187,9 @@ def text_to_speech(text: str) -> bytes:
         return b"" # Return empty bytes if client not available
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
-        language_code="te-IN", # Assuming Telugu, as per previous handlers
-        name="te-IN-Standard-A", # Changed to a known valid voice
-        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE # Or NEUTRAL
+        language_code="te-IN", 
+        name="te-IN-Chirp3-HD-Puck-MALE", # Changed to Chirp3 voice
+        ssml_gender=texttospeech.SsmlVoiceGender.MALE # Changed gender to MALE
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
