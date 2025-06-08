@@ -264,8 +264,10 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
 
     try:
         print("DEBUG: Sending request to OpenAI...")
+        model_name = "gpt-4o" # Explicitly state the model used for debugging
+        print(f"DEBUG: Using model '{model_name}' for image processing.")
         response = client.chat.completions.create(
-            model="gpt-4o", # Model switched to gpt-4o for image processing as proposed in new code
+            model=model_name,
             messages=messages,
             max_tokens=500
         )
