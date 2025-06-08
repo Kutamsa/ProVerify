@@ -5,14 +5,14 @@ import tempfile
 from pydub import AudioSegment
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.constants import ParseMode
+from telegram.constants import ParseMode # Still useful if you use specific parse modes later
 
 # These global variables will be set during the bot's initialization
 # by the main app.py file.
 _openai_client = None
 _tts_function = None
 _authorized_user_ids = []
-_perform_image_factcheck_function = None # To avoid circular imports if app.py imports us
+_perform_image_factcheck_function = None
 
 def initialize_bot_components(
     openai_client_instance,
@@ -77,8 +77,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Sends a message when the command /start is issued."""
     user_id = update.effective_user.id
     if is_authorized(user_id):
-        await update.message.reply_html(
-            f"Hello {update.effective_user.mention_html()}! 👋\n"
+        # FIX: Changed reply_html to reply_text to avoid HTML parsing errors
+        await update.message.reply_text(
+            f"Hello {update.effective_user.first_name}! 👋\n" # Using first_name, mention_html needs specific parsing
             "I am your Fact-Checking bot. Send me text, a voice message, or a photo to fact-check it. "
             "You can also use /factcheck_text <your_text>."
         )
@@ -89,6 +90,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Sends a message when the command /help is issued."""
     user_id = update.effective_user.id
     if is_authorized(user_id):
+        # FIX: Changed reply_html to reply_text to avoid HTML parsing errors
         await update.message.reply_text(
             "Send me text to fact-check.\n"
             "Send me a voice message to get a transcription and fact-check.\n"
@@ -175,7 +177,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             photo_file_id = message.photo[-1].file_id # Get the largest photo size
             photo_file = await context.bot.get_file(photo_file_id)
             photo_bytes = await photo_file.download_as_bytearray()
-
+            
             caption = message.caption if message.caption else ""
             mime_type = "image/jpeg" # Common type for Telegram photos
 
@@ -184,7 +186,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         else:
             await message.reply_text("Sorry, I can only fact-check text, voice messages, and photos.")
-
+            
     except Exception as e:
         print(f"Error handling Telegram message: {e}")
         await message.reply_text(f"An error occurred: {e}. Please try again.")
@@ -203,4 +205,3 @@ def setup_telegram_bot_application(token: str) -> Application:
     application.add_handler(MessageHandler(filters.PHOTO, handle_message))
 
     return application
-
