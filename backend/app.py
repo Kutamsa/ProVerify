@@ -11,9 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
-from openai import OpenAI
+from openai import OpenAI # Keep OpenAI import for text/audio
 from dotenv import load_dotenv
 import json
+import httpx # Import httpx for making asynchronous HTTP requests to Gemini
 
 # Import Telegram bot setup from our new module (relative import)
 from . import telegram_bot_handlers 
@@ -24,7 +25,14 @@ load_dotenv()
 # Ensure your OPENAI_API_KEY is set in your .env file locally,
 # and as an environment variable on Render.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-client = OpenAI(api_key=OPENAI_API_KEY)
+# Keep OpenAI client for text/audio processing AND for Telegram bot image processing
+openai_client = OpenAI(api_key=OPENAI_API_KEY) 
+
+# --- Gemini API Config (for Website Image Processing ONLY) ---
+# For Gemini API, the API key is automatically provided by Canvas runtime if left empty.
+# If you are deploying this outside Canvas or need a specific key, you'd set it here.
+GEMINI_API_KEY = "" # Leave this empty for Canvas, or put your Gemini API key here
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 # --- TELEGRAM BOT CONFIG ---
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -92,7 +100,9 @@ def text_to_speech(text: str) -> str:
     response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
     return base64.b64encode(response.audio_content).decode('utf-8')
 
-# --- FACT-CHECKING FUNCTIONS (reused and now directly called by web app and bot) ---
+# --- FACT-CHECKING FUNCTIONS ---
+
+# Function for Text Fact-Checking (uses OpenAI)
 async def perform_text_factcheck(input_text: str):
     messages = [
         {
@@ -128,9 +138,8 @@ Instructions:
         }
     ]
 
-    ai_response = client.chat.completions.create(
+    ai_response = openai_client.chat.completions.create( # Using openai_client
         model="o4-mini",
-        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
         messages=messages
     )
 
@@ -138,9 +147,10 @@ Instructions:
     audio_base64 = text_to_speech(fact_check_result)
     return {"result": fact_check_result, "audio_result": audio_base64}
 
+# Function for Audio Fact-Checking (uses OpenAI Whisper for transcription, then OpenAI chat for fact-check)
 async def perform_audio_factcheck(audio_file_path: str):
     with open(audio_file_path, "rb") as audio_file:
-        transcript = client.audio.transcriptions.create(
+        transcript = openai_client.audio.transcriptions.create( # Using openai_client
             model="whisper-1",
             file=audio_file
         )
@@ -180,9 +190,8 @@ Instructions:
         }
     ]
 
-    ai_response = client.chat.completions.create(
+    ai_response = openai_client.chat.completions.create( # Using openai_client
         model="o4-mini",
-        # temperature=0.2, # REMOVED: o4-mini does not support custom temperature
         messages=messages
     )
 
@@ -190,97 +199,130 @@ Instructions:
     audio_base64_result = text_to_speech(fact_check_result)
     return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
 
-async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str):
-    # --- START NEW IMAGE TYPE INFERENCE AND VALIDATION LOGIC ---
-    # Try to guess mime type from image content, which is more robust than just header
-    # and map it to common types OpenAI expects.
-    guessed_type = imghdr.what(None, h=image_bytes)
-    
-    mime_type_for_openai = None
-    if guessed_type == 'jpeg':
-        mime_type_for_openai = 'image/jpeg'
-    elif guessed_type == 'png':
-        mime_type_for_openai = 'image/png'
-    elif guessed_type == 'gif':
-        mime_type_for_openai = 'image/gif'
-    # imghdr does not support webp directly, so we trust the original mime_type if it's webp
-    elif mime_type == 'image/webp': # Check if original MIME type is webp
-        mime_type_for_openai = 'image/webp'
-    
-    # Fallback to original mime_type if imghdr couldn't guess or it's not a common type
-    if not mime_type_for_openai:
-        # Validate against OpenAI's explicitly supported list
-        allowed_mime_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
-        if mime_type not in allowed_mime_types:
-            raise ValueError(f"Unsupported image MIME type received: {mime_type}. Allowed: {allowed_mime_types}")
-        mime_type_for_openai = mime_type # Trust the original if it's in the allowed list
-
-    print(f"DEBUG: Original MIME type from FastAPI: {mime_type}")
-    print(f"DEBUG: Inferred MIME type for OpenAI: {mime_type_for_openai}")
-    print(f"DEBUG: Image bytes length: {len(image_bytes)}")
-        
-    # Validate image bytes are not empty
-    if len(image_bytes) == 0:
-        raise ValueError("Empty image data received")
-    
+# Function for Image Fact-Checking using OpenAI (for Telegram Bot)
+async def perform_image_factcheck_openai(image_bytes: bytes, mime_type: str, caption: str):
+    # This function will be used by the Telegram bot
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
-    print(f"DEBUG: Base64 image length: {len(b64_image)}")
-    print(f"DEBUG: Base64 preview (first 50 chars): {b64_image[:50]}...")
-        
-    # Create the data URL - this is the critical part
-    data_url = f"data:{mime_type_for_openai};base64,{b64_image}"
-    # --- END NEW IMAGE TYPE INFERENCE AND VALIDATION LOGIC ---
-
     messages = [
-        {
-            "role": "system",
-            "content": "You are a smart and honest Telugu-speaking fact checker. You speak like a well-informed, friendly human who mixes Telugu and English naturally. You never repeat yourself. Be accurate, clear, and real."
-        },
+        {"role": "system", "content": "You are a fact-checking assistant. Provide clear and concise answers."},
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "Is this a real photo of a unicorn?"},
-                {"type": "image_url", "image_url": {"url": "https://placehold.co/200x200/FF0000/FFFFFF?text=Unicorn"}} # Dummy image for example
-            ]
-        },
-        {
-            "role": "assistant",
-            "content": "ఇది నిజమైన యునికార్న్ ఫోటో కాదు. యునికార్న్‌లు పురాణ జీవులు, అవి నిజంగా ఉనికిలో లేవు. ఇది డిజిటల్‌గా సృష్టించబడిన చిత్రం లేదా నకిలీ ఫోటో అయ్యే అవకాశం ఉంది."
-        },
-        {
-            "role": "user",
-            "content": [
-                {
-                    "type": "text", 
-                    "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.{f"Context provided: {caption}" if caption else "No additional context provided."}Instructions:- Respond in clear, simple Telugu — use English only where needed.- Do not respond in bullet points. Write like you're explaining it to someone directly.- Analyze what you see in the image and determine if it appears authentic or manipulated.- If you detect signs of manipulation, explain what you notice.- If it appears genuine, provide context about what the image shows.- If it's controversial or you're uncertain, be honest about limitations.- Do not repeat yourself.- Use natural sentence flow like a real person would."""
-                },
+                {"type": "text", "text": caption or "Please fact-check this image."},
                 {
                     "type": "image_url",
-                    "image_url": {"url": data_url} # Use the dynamically created data_url
+                    "image_url": {"url": f"data:{mime_type};base64,{b64_image}"}
                 }
             ],
         }
     ]
-
     try:
-        print("DEBUG: Sending request to OpenAI...")
-        model_name = "gpt-4o" # Explicitly state the model used for debugging
-        print(f"DEBUG: Using model '{model_name}' for image processing.")
-        response = client.chat.completions.create(
-            model=model_name,
+        print("DEBUG: Sending request to OpenAI for image processing (for Telegram)...")
+        print(f"DEBUG: Using OpenAI model 'gpt-4o' for Telegram image processing.") # Confirm model
+        response = openai_client.chat.completions.create( # Using openai_client
+            model="gpt-4o", # Keep using gpt-4o for Telegram images for now
             messages=messages,
             max_tokens=500
         )
-        print("DEBUG: OpenAI request successful")
+        print("DEBUG: OpenAI image request successful (for Telegram)")
         return {"result": response.choices[0].message.content}
     except Exception as e:
-        print(f"Error calling OpenAI API for image: {e}")
-        # Additional debugging for OpenAI errors
+        print(f"Error calling OpenAI API for Telegram image: {e}")
         if hasattr(e, 'response') and e.response:
-            print(f"OpenAI API response status: {e.response.status_code}")
-            print(f"OpenAI API response body: {e.response.text}")
-        # Re-raise the exception after printing for visibility in logs
-        raise # Re-raise to be caught by the FastAPI endpoint handler
+            print(f"OpenAI API response status (Telegram): {e.response.status_code}")
+            print(f"OpenAI API response body (Telegram): {e.response.text}")
+        raise # Re-raise to be caught by the calling handler
+
+
+# NEW Function for Image Fact-Checking using Gemini (for Website ONLY)
+async def perform_image_factcheck_gemini(image_bytes: bytes, mime_type: str, caption: str):
+    # This function will be used by the website's image upload
+    
+    # --- Robust Image Type Inference (copied from previous logic) ---
+    guessed_type = imghdr.what(None, h=image_bytes)
+    
+    mime_type_for_gemini = None 
+    if guessed_type == 'jpeg':
+        mime_type_for_gemini = 'image/jpeg'
+    elif guessed_type == 'png':
+        mime_type_for_gemini = 'image/png'
+    elif guessed_type == 'gif':
+        mime_type_for_gemini = 'image/gif'
+    elif mime_type == 'image/webp':
+        mime_type_for_gemini = 'image/webp'
+    
+    if not mime_type_for_gemini:
+        allowed_mime_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+        if mime_type not in allowed_mime_types:
+            raise ValueError(f"Unsupported image MIME type received: {mime_type}. Allowed: {allowed_mime_types}")
+        mime_type_for_gemini = mime_type
+
+    print(f"DEBUG: Original MIME type from FastAPI (Website): {mime_type}")
+    print(f"DEBUG: Inferred MIME type for Gemini (Website): {mime_type_for_gemini}")
+    print(f"DEBUG: Image bytes length (Website): {len(image_bytes)}")
+        
+    if len(image_bytes) == 0:
+        raise ValueError("Empty image data received")
+    
+    b64_image = base64.b64encode(image_bytes).decode("utf-8")
+    print(f"DEBUG: Base64 image length (Website): {len(b64_image)}")
+    print(f"DEBUG: Base64 preview (first 50 chars - Website): {b64_image[:50]}...")
+    # --- End Image Type Inference ---
+
+    # --- GEMINI API CALL ---
+    gemini_prompt_parts = [
+        {
+            "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.{f"Context provided: {caption}" if caption else "No additional context provided."}Instructions:- Respond in clear, simple Telugu — use English only where needed.- Do not respond in bullet points. Write like you're explaining it to someone directly.- Analyze what you see in the image and determine if it appears authentic or manipulated.- If you detect signs of manipulation, explain what you notice.- If it appears genuine, provide context about what the image shows.- If it's controversial or you're uncertain, be honest about limitations.- Do not repeat yourself.- Use natural sentence flow like a real person would."""
+        },
+        {
+            "inlineData": {
+                "mimeType": mime_type_for_gemini,
+                "data": b64_image
+            }
+        }
+    ]
+
+    gemini_payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": gemini_prompt_parts
+            }
+        ]
+    }
+
+    try:
+        print("DEBUG: Sending request to Gemini API for website image processing...")
+        print(f"DEBUG: Using Gemini model 'gemini-2.0-flash' for website image processing.")
+        
+        async with httpx.AsyncClient() as http_client:
+            gemini_response = await http_client.post(
+                f"{GEMINI_API_URL}?key={GEMINI_API_KEY}",
+                json=gemini_payload,
+                headers={"Content-Type": "application/json"}
+            )
+            gemini_response.raise_for_status() 
+        
+        gemini_result = gemini_response.json()
+        
+        fact_check_result = "No result text found."
+        if gemini_result.get('candidates') and len(gemini_result['candidates']) > 0 and \
+           gemini_result['candidates'][0].get('content') and \
+           gemini_result['candidates'][0]['content'].get('parts') and \
+           len(gemini_result['candidates'][0]['content']['parts']) > 0:
+            fact_check_result = gemini_result['candidates'][0]['content']['parts'][0].get('text', 'No result text found.')
+        else:
+            print(f"DEBUG: Unexpected Gemini response structure for website image: {gemini_result}")
+
+        print("DEBUG: Gemini request successful (Website)")
+        return {"result": fact_check_result}
+    except httpx.HTTPStatusError as e:
+        print(f"Error calling Gemini API for website image (HTTP Error): {e.response.status_code} - {e.response.text}")
+        raise ValueError(f"Gemini API HTTP Error (Website): {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        print(f"Error calling Gemini API for website image: {e}")
+        raise 
+
 
 # --- WEB APP ENDPOINTS ---
 @app.post("/factcheck/text")
@@ -314,51 +356,47 @@ async def factcheck_image_web(
     caption: str = Form("")
 ):
     """
-    Fact-checks an image with an optional caption using OpenAI's vision model.
+    Fact-checks an image with an optional caption using Gemini's vision model for the website.
     Includes robust file type and header validation.
     """
     try:
-        # Validate file is actually an image based on content_type header
         if not file.content_type or not file.content_type.startswith('image/'):
             return JSONResponse(
                 content={"error": f"Invalid file type. Expected image, got: {file.content_type}"}, 
                 status_code=400
             )
         
-        print(f"DEBUG: Received file - Name: {file.filename}, Content-Type: {file.content_type}, Size: {file.size}")
+        print(f"DEBUG: Received file from website - Name: {file.filename}, Content-Type: {file.content_type}, Size: {file.size}")
         
         image_bytes = await file.read()
         
-        # Validate we actually got image data
         if len(image_bytes) == 0:
             return JSONResponse(
                 content={"error": "Empty file received"}, 
                 status_code=400
             )
             
-        print(f"DEBUG: Read {len(image_bytes)} bytes from uploaded file")
+        print(f"DEBUG: Read {len(image_bytes)} bytes from uploaded file (Website)")
         
-        # Additional validation - check if the image bytes start with valid image headers (magic numbers)
-        if len(image_bytes) < 8: # Minimum size for most common image headers
+        if len(image_bytes) < 8: 
             return JSONResponse(
                 content={"error": "File too small to be a valid image"}, 
                 status_code=400
             )
         
-        header = image_bytes[:12] # Check first few bytes
+        header = image_bytes[:12] 
         is_valid_image = False
         detected_format = "Unknown"
 
-        if header.startswith(b'\x89PNG\r\n\x1a\n'):  # PNG
+        if header.startswith(b'\x89PNG\r\n\x1a\n'):  
             is_valid_image = True
             detected_format = "PNG"
-        elif header.startswith(b'\xff\xd8\xff'):  # JPEG
+        elif header.startswith(b'\xff\xd8\xff'):  
             is_valid_image = True
             detected_format = "JPEG"
-        elif header.startswith(b'GIF8'):  # GIF
+        elif header.startswith(b'GIF8'):  
             is_valid_image = True
             detected_format = "GIF"
-        # WebP magic number: RIFF (52 49 46 46) at start, and WEBP at offset 8
         elif header.startswith(b'RIFF') and len(image_bytes) >= 12 and image_bytes[8:12] == b'WEBP': 
             is_valid_image = True
             detected_format = "WebP"
@@ -369,13 +407,13 @@ async def factcheck_image_web(
                 status_code=400
             )
             
-        print(f"DEBUG: Detected image format via magic number: {detected_format}")
+        print(f"DEBUG: Detected image format via magic number (Website): {detected_format}")
         
-        # Pass file.content_type to perform_image_factcheck, which will then use imghdr
-        response = await perform_image_factcheck(image_bytes, file.content_type, caption)
+        # Call the new Gemini-specific image processing function
+        response = await perform_image_factcheck_gemini(image_bytes, file.content_type, caption)
         return JSONResponse(content=response)
             
-    except ValueError as ve: # Catch validation errors raised by perform_image_factcheck
+    except ValueError as ve:
         print(f"Validation error in factcheck_image_web: {ve}")
         return JSONResponse(content={"error": str(ve)}, status_code=400)
     except Exception as e:
@@ -401,11 +439,12 @@ async def startup_event():
     global telegram_application # Declare global to assign
 
     # Initialize bot components in the separate module
+    # Pass the OpenAI-based image fact-check function for the Telegram bot
     telegram_bot_handlers.initialize_bot_components(
-        openai_client_instance=client,
+        openai_client_instance=openai_client, 
         tts_func=text_to_speech,
         authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-        perform_image_factcheck_func=perform_image_factcheck
+        perform_image_factcheck_func=perform_image_factcheck_openai # <--- IMPORTANT: Telegram still uses OpenAI for images
     )
 
     if TELEGRAM_BOT_TOKEN:
@@ -430,7 +469,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Remove the webhook for the Telegram bot when the FastAPI app shuts down."""
-    if telegram_application and os.getenv("RENDER_SERVICE_URL"):
+    if telegram_application and os.getenv("RENDER_SERVICE_URL"): 
         print("Removing Telegram webhook...")
         await telegram_application.shutdown()
         print("Telegram webhook removed (via application shutdown).")
@@ -444,11 +483,10 @@ async def telegram_webhook(request: Request) -> Response:
 
     try:
         req_json = await request.json()
-        # Ensure Update is imported from telegram for de_json
         from telegram import Update 
         update = Update.de_json(req_json, telegram_application.bot)
         
-        if update:
+        if update: 
             await telegram_application.process_update(update)
         return Response(status_code=status.HTTP_200_OK)
     except Exception as e:
@@ -458,16 +496,15 @@ async def telegram_webhook(request: Request) -> Response:
 # --- Main execution block ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"):
+    if TELEGRAM_BOT_TOKEN and not os.getenv("RENDER_SERVICE_URL"): 
         print("Running Telegram bot in local polling mode...")
-        # Make sure to import Update if running this block directly for telegram.Update.de_json
         from telegram import Update 
         telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
         telegram_bot_handlers.initialize_bot_components(
-            openai_client_instance=client,
+            openai_client_instance=openai_client, 
             tts_func=text_to_speech,
             authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-            perform_image_factcheck_func=perform_image_factcheck
+            perform_image_factcheck_func=perform_image_factcheck_openai # <--- IMPORTANT: Telegram still uses OpenAI for images
         )
         telegram_application.run_polling(poll_interval=1)
     else:
