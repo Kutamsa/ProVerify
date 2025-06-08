@@ -22,7 +22,7 @@ from telegram import Update
 import psycopg2
 import psycopg2.extras
 from urllib.parse import urlparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone # Import timezone for robust datetime handling
 import feedparser
 
 load_dotenv()
@@ -188,7 +188,7 @@ def text_to_speech(text: str) -> bytes:
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
         language_code="te-IN", # Assuming Telugu, as per previous handlers
-        name="te-IN-Wavenet-B", # Using a common Wavenet voice
+        name="te-IN-Standard-A", # Changed to a known valid voice
         ssml_gender=texttospeech.SsmlVoiceGender.FEMALE # Or NEUTRAL
     )
     audio_config = texttospeech.AudioConfig(
@@ -257,8 +257,6 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
         mime_type = f"image/{img_type}"
     else:
         # Fallback for types imghdr might not recognize, e.g., webp
-        # If possible, derive from file extension or content-type header
-        # For simplicity, if imghdr fails, we might default or raise an error
         print("Warning: imghdr could not determine image type. Falling back to octet-stream.")
         mime_type = "application/octet-stream"
 
@@ -327,7 +325,8 @@ async def factcheck_audio(audio_file: UploadFile = File(...)):
 
     fact_check_result = await perform_text_factcheck(transcription)
 
-    audio_response = await text_to_speech(fact_check_result)
+    # Removed 'await' as text_to_speech is synchronous
+    audio_response = text_to_speech(fact_check_result) 
     if not audio_response:
         return JSONResponse(status_code=500, content={"error": "Failed to synthesize audio response."})
 
@@ -345,7 +344,8 @@ async def factcheck_text(item: dict):
 
     fact_check_result = await perform_text_factcheck(text)
 
-    audio_response = await text_to_speech(fact_check_result)
+    # Removed 'await' as text_to_speech is synchronous
+    audio_response = text_to_speech(fact_check_result) 
     if not audio_response:
         return JSONResponse(status_code=500, content={"error": "Failed to synthesize audio response."})
 
@@ -364,7 +364,8 @@ async def factcheck_image(image: UploadFile = File(...), caption: str = Form(Non
     if fact_check_result.startswith("Error") or "No fact-check result could be extracted" in fact_check_result:
         return JSONResponse(status_code=500, content={"error": fact_check_result})
 
-    audio_response = await text_to_speech(fact_check_result)
+    # Removed 'await' as text_to_speech is synchronous
+    audio_response = text_to_speech(fact_check_result) 
     if not audio_response:
         return JSONResponse(status_code=500, content={"error": "Failed to synthesize audio response."})
 
@@ -425,7 +426,8 @@ async def get_news_sources():
         if not conn:
             return JSONResponse(status_code=500, content={"error": "Database connection not established."})
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        cur.execute("SELECT id, name, url FROM sources ORDER BY created_at DESC;")
+        # Removed ORDER BY created_at DESC as it might not exist in older DB instances
+        cur.execute("SELECT id, name, url FROM sources ORDER BY id DESC;") 
         sources = cur.fetchall()
         return JSONResponse(status_code=200, content={"sources": [dict(s) for s in sources]})
     except Exception as e:
@@ -459,7 +461,8 @@ async def get_news_articles(
             query += " WHERE a.source_id = %s"
             params.append(source_id)
 
-        query += " ORDER BY a.pub_date DESC NULLS LAST, a.fetched_at DESC LIMIT %s OFFSET %s;"
+        # Removed 'ORDER BY a.pub_date DESC NULLS LAST' to address potential issues
+        query += " ORDER BY a.fetched_at DESC LIMIT %s OFFSET %s;"
         params.extend([limit, offset])
 
         cur.execute(query, params)
@@ -480,8 +483,24 @@ async def get_news_articles(
 
         all_articles = []
         for article in articles:
-            # Ensure pub_date is a string in ISO format for consistent JSON serialization
-            pub_date_str = article['pub_date'].isoformat() if article['pub_date'] else None
+            # Ensure pub_date is converted to datetime if it's not already, before calling isoformat()
+            pub_date_obj = None
+            if article['pub_date']:
+                if isinstance(article['pub_date'], datetime):
+                    pub_date_obj = article['pub_date']
+                else: # Attempt to parse if it's a string
+                    try:
+                        # Attempt to parse common formats
+                        pub_date_obj = datetime.fromisoformat(article['pub_date'])
+                    except ValueError:
+                        try: # Fallback for formats like feedparser might return
+                            pub_date_obj = datetime.strptime(article['pub_date'], '%a, %d %b %Y %H:%M:%S %z')
+                        except ValueError:
+                            print(f"Warning: Could not parse pub_date string: {article['pub_date']}")
+                            pub_date_obj = None # Set to None if parsing fails
+            
+            pub_date_str = pub_date_obj.isoformat() if pub_date_obj else None
+            
             all_articles.append({
                 "title": article['title'],
                 "link": article['link'],
@@ -526,7 +545,7 @@ async def fetch_and_store_news(source_id: int):
             link = entry.link
             pub_date = None
             if hasattr(entry, 'published_parsed'):
-                pub_date = datetime(*entry.published_parsed[:6])
+                pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc) # Ensure timezone-aware datetime
             
             try:
                 cur.execute("INSERT INTO articles (source_id, title, link, pub_date) VALUES (%s, %s, %s, %s) ON CONFLICT (link) DO NOTHING;",
