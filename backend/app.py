@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI):
                 tts_func=text_to_speech if tts_client else None, # Pass actual TTS func if client is ready
                 authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
                 perform_image_factcheck_func=perform_image_factcheck, # Pass the unified image fact-check function
-                transcribe_audio_func=transcribe_audio # Pass transcribe_audio function
+                transcribe_audio_func=transcribe_audio_from_bytes # Pass the new transcribe_audio_from_bytes function
             )
             print("Telegram bot components initialized within lifespan.")
         except Exception as e:
@@ -219,12 +219,10 @@ def text_to_speech(text: str) -> str: # Modified to return base64 string directl
         print(f"Error synthesizing speech: {e}")
         return ""
 
-async def transcribe_audio(audio_file: UploadFile) -> str:
-    # Read the audio content directly into memory
-    content = await audio_file.read()
-    
+async def transcribe_audio_from_bytes(audio_bytes: bytes) -> str: # NEW: Function accepts bytes directly
+    """Transcribes audio content (bytes) using OpenAI Whisper API."""
     # Create an in-memory file-like object for OpenAI API
-    audio_bytes_io = io.BytesIO(content)
+    audio_bytes_io = io.BytesIO(audio_bytes)
     audio_bytes_io.name = "audio.mp3" # Assign a name, though not strictly required by OpenAI
     
     try:
@@ -290,17 +288,13 @@ Instructions:
         print(f"Error during text fact-check: {e}")
         return {"error": f"Error during fact-check: {e}"}
 
-async def perform_audio_factcheck(audio_file_content: bytes):
-    # Create a BytesIO object for the audio content to mimic UploadFile for transcribe_audio
-    mock_audio_file = io.BytesIO(audio_file_content)
-    mock_audio_file.name = "audio.mp3" # Give it a name for transcription
-    
+async def perform_audio_factcheck(audio_file_content: bytes): # This function now directly receives bytes
     if not OPENAI_API_KEY:
         return {"error": "Error: OpenAI API key is not configured for audio fact-checking."}
 
     try:
-        # Transcribe audio using the transcribe_audio function
-        transcribed_text = await transcribe_audio(UploadFile(file=mock_audio_file, filename="audio.mp3", content_type="audio/mp3"))
+        # Pass the audio_file_content (bytes) directly to the new transcribe_audio_from_bytes function
+        transcribed_text = await transcribe_audio_from_bytes(audio_file_content) 
         if transcribed_text.startswith("Error"):
             return {"error": transcribed_text}
 
@@ -356,20 +350,16 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
         return {"error": "Gemini API key is not configured for image fact-checking."}
 
     # Robust MIME type detection
-    # Use imghdr.what for robust detection
     img_type = imghdr.what(None, h=image_bytes)
     mime_type_for_gemini = None
 
     if img_type:
         mime_type_for_gemini = f"image/{img_type}"
     else:
-        # Fallback for types imghdr might not recognize, e.g., webp
-        # If original mime_type from UploadFile is image/webp, use it.
         if mime_type == 'image/webp':
             mime_type_for_gemini = 'image/webp'
         else:
             print("Warning: imghdr could not determine image type. Falling back to octet-stream or original MIME type if allowed.")
-            # For robustness, only allow specific image types
             allowed_mime_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
             if mime_type in allowed_mime_types:
                 mime_type_for_gemini = mime_type
@@ -400,7 +390,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
             - Analyze what you see in the image and determine if it appears authentic or manipulated.
             - If you detect signs of manipulation, explain what you notice.
             - If it appears genuine, provide context about what the image shows.
-            - If it's controversial or you're uncertain, be honest about limitations.
+            - If it's controversial, be honest about limitations.
             - Do not repeat yourself.
             - Use natural sentence flow like a real person would.
             """
@@ -463,7 +453,7 @@ async def read_root():
 async def factcheck_audio_web(audio_file: UploadFile = File(...)):
     # Read content directly into memory
     content = await audio_file.read()
-    response = await perform_audio_factcheck(content)
+    response = await perform_audio_factcheck(content) # Pass raw bytes to perform_audio_factcheck
     if "error" in response:
         return JSONResponse(status_code=500, content=response)
     return JSONResponse(content=response)
@@ -702,24 +692,20 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
 
-    # This block will be used for local development if RENDER_SERVICE_URL is not set
     if TELEGRAM_BOT_TOKEN and not RENDER_SERVICE_URL:
-        if telegram_application: # Check if initialized by lifespan (if not running with reload=True)
+        if telegram_application: 
             import asyncio
-            # Manually initialize if running this block directly without FastAPI's lifespan
             asyncio.run(telegram_application.initialize())
             print("Running Telegram bot in local polling mode...")
             telegram_application.run_polling(poll_interval=1.0)
         else:
-            # If telegram_application is None here, it means the token was set but lifespan didn't run
-            # or failed. Re-initialize for local polling.
             telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
             telegram_bot_handlers.initialize_bot_components(
                 openai_client_instance=openai_client,
                 tts_func=text_to_speech,
                 authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
                 perform_image_factcheck_func=perform_image_factcheck,
-                transcribe_audio_func=transcribe_audio
+                transcribe_audio_func=transcribe_audio_from_bytes # Pass the updated function
             )
             import asyncio
             asyncio.run(telegram_application.initialize())

@@ -7,7 +7,7 @@ from pydub import AudioSegment
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode 
-import imghdr
+import imghdr # FIX: Added missing import for imghdr
 
 # These global variables will be set during the bot's initialization
 # by the main app.py file.
@@ -120,25 +120,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(help_message, parse_mode=ParseMode.MARKDOWN)
     print(f"Help command received from authorized user: {user_id}")
 
-# Mock UploadFile class for transcribe_audio function compatibility
-# This class needs to be defined here to be used by handle_message
-class MockUploadFile:
-    def __init__(self, filename: str, content_type: str, file_content: bytes):
-        self._file_content = io.BytesIO(file_content)
-        self.filename = filename
-        self.content_type = content_type
-
-    async def read(self) -> bytes:
-        self._file_content.seek(0)
-        return self._file_content.read()
-
-    # Async context manager methods are needed for FastAPI's UploadFile compatibility
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._file_content.close()
-
+# Removed MockUploadFile class - no longer needed since transcribe_audio accepts bytes directly
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -158,8 +140,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             if _tts_function:
                 try:
-                    audio_bytes_base64 = _tts_function(result) # This now returns base64 string
-                    audio_bytes = base64.b64decode(audio_bytes_base64) # Decode back to bytes
+                    audio_bytes_base64 = _tts_function(result) 
+                    audio_bytes = base64.b64decode(audio_bytes_base64) 
                     audio = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
                     ogg_output = io.BytesIO()
                     audio.export(ogg_output, format="ogg", codec="libopus")
@@ -178,25 +160,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             voice_file = await context.bot.get_file(message.voice.file_id)
             
             voice_ogg_bytes_io = io.BytesIO()
+            mp3_output_io = io.BytesIO() # Define mp3_output_io here for finally block
             try:
                 await voice_file.download_to_memory(voice_ogg_bytes_io)
                 voice_ogg_bytes_io.seek(0)
 
                 audio = AudioSegment.from_ogg(voice_ogg_bytes_io)
-                mp3_output_io = io.BytesIO()
                 audio.export(mp3_output_io, format="mp3")
                 mp3_output_io.seek(0)
 
-                # Create a MockUploadFile from the in-memory MP3 content
-                # This ensures compatibility with app.py's transcribe_audio function
-                mock_upload_file = MockUploadFile(
-                    filename="telegram_voice.mp3",
-                    content_type="audio/mp3",
-                    file_content=mp3_output_io.getvalue()
-                )
-
-                await message.reply_text("Transcribing audio...", quote=True)
-                transcribed_text_result = await _transcribe_audio_function(mock_upload_file)
+                # Pass the raw MP3 bytes directly to the transcribe_audio_function
+                transcribed_text_result = await _transcribe_audio_function(mp3_output_io.getvalue()) 
                 await message.reply_text(f"Transcription: {transcribed_text_result}")
 
                 await message.reply_text("Fact-checking transcription...", quote=True)
@@ -205,8 +179,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 
                 if _tts_function:
                     try:
-                        audio_bytes_base64 = _tts_function(fact_check_result) # This now returns base64 string
-                        audio_bytes = base64.b64decode(audio_bytes_base64) # Decode back to bytes
+                        audio_bytes_base64 = _tts_function(fact_check_result) 
+                        audio_bytes = base64.b64decode(audio_bytes_base64) 
                         audio = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
                         ogg_output = io.BytesIO()
                         audio.export(ogg_output, format="ogg", codec="libopus")
@@ -235,12 +209,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             caption = message.caption if message.caption else ""
             await message.reply_text("Fact-checking your image...", quote=True)
             
-            # The perform_image_factcheck_function now expects bytes, mime_type, and caption
-            # We need to guess the mime type here for the telegram bot.
-            # Use imghdr for robust detection
             img_bytes = image_bytes_io.getvalue()
             img_type = imghdr.what(None, h=img_bytes)
-            mime_type = f"image/{img_type}" if img_type else "application/octet-stream" # Fallback
+            mime_type = f"image/{img_type}" if img_type else "application/octet-stream" 
 
             fact_check_response = await _perform_image_factcheck_function(img_bytes, mime_type, caption)
             
@@ -251,8 +222,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
                 if _tts_function:
                     try:
-                        audio_bytes_base64 = _tts_function(fact_check_response['result']) # This now returns base64 string
-                        audio_bytes = base64.b64decode(audio_bytes_base64) # Decode back to bytes
+                        audio_bytes_base64 = _tts_function(fact_check_response['result']) 
+                        audio_bytes = base64.b64decode(audio_bytes_base64) 
                         audio = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
                         ogg_output = io.BytesIO()
                         audio.export(ogg_output, format="ogg", codec="libopus")

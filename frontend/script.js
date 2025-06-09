@@ -35,8 +35,8 @@ const ARTICLES_PER_PAGE = 10; // Consistent with backend limit
 // Helper function to display messages to the user
 function showMessageBox(message, isError = false) {
     messageBox.textContent = message;
-    // Updated colors to match common success/error palette for message boxes
-    messageBox.style.backgroundColor = isError ? "#dc3545" : "#28a745"; // Red for error, Green for success
+    // Updated colors to match the new palette: Red for error, Green for success
+    messageBox.style.backgroundColor = isError ? "#EF4444" : "#22C55E";
     messageBox.style.display = "block";
     setTimeout(() => {
         messageBox.style.opacity = 1;
@@ -463,6 +463,7 @@ async function fetchNewsArticles(sourceId = null, append = false) {
         console.error("Fetch news articles error:", err);
         articlesList.innerHTML = '<li>Unable to load news articles. Network error or server issue.</li>';
         showMessageBox("Failed to fetch news articles. Please try again.", true);
+        loadMoreBtn.style.display = 'none';
     }
 }
 
