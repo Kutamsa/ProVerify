@@ -7,6 +7,7 @@ from pydub import AudioSegment
 from telegram import Update, Bot
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode 
+import imghdr
 
 # These global variables will be set during the bot's initialization
 # by the main app.py file.

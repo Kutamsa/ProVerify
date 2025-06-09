@@ -11,7 +11,7 @@ html {
     padding: 0;
     font-family: Arial, sans-serif;
     /* Reverted to original font */
-    background-color: #f4f4f4;
+    background-color: linear-gradient(135deg, #0b0c13 0%, #6f3fc2 100%);
     /* Reverted to original light gray background */
     color: #333;
     /* Reverted to original text color */
@@ -301,7 +301,7 @@ input[type="file"] {
     font-size: 1.2rem;
     color: #333;
     /* Reverted to general text color */
-    animation: spin 1s linear infinite;
+    animation: none;
 }
 
 @keyframes spin {
