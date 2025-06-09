@@ -35,8 +35,8 @@ const ARTICLES_PER_PAGE = 10; // Consistent with backend limit
 // Helper function to display messages to the user
 function showMessageBox(message, isError = false) {
     messageBox.textContent = message;
-    // Updated colors to match the new palette: Red for error, Green for success
-    messageBox.style.backgroundColor = isError ? "#EF4444" : "#22C55E";
+    // Updated colors to match the palette derived from the image (red and green for messages)
+    messageBox.style.backgroundColor = isError ? "#EF4444" : "#22C55E"; // Red for error, Green for success
     messageBox.style.display = "block";
     setTimeout(() => {
         messageBox.style.opacity = 1;
@@ -92,7 +92,7 @@ async function toggleRecording() {
         mediaRecorder.stop();
         recordLabel.textContent = "Processing...";
         recordBtn.classList.remove("recording");
-        recordBtn.textContent = "🎤"; // Change back to mic symbol
+        recordBtn.textContent = "⏹️"; // Change to stop symbol
     } else {
         audioChunks = [];
         try {
@@ -124,11 +124,11 @@ async function toggleRecording() {
                     recordLabel.textContent = "Click to Record"; // Clear processing message
 
                     if (response.ok) {
-                        transcriptionText.textContent = data.transcription;
+                        transcriptionText.textContent = data.transcription; // Correct key
                         transcriptionBox.style.display = "block";
-                        resultOutput.textContent = data.factCheckResult;
-                        if (data.audio) {
-                            const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+                        resultOutput.textContent = data.result; // FIX: Changed from data.factCheckResult to data.result
+                        if (data.audio_result) { // FIX: Changed from data.audio to data.audio_result
+                            const audioBytes = Uint8Array.from(atob(data.audio_result), c => c.charCodeAt(0));
                             const blob = new Blob([audioBytes], { type: "audio/mp3" });
                             const url = URL.createObjectURL(blob);
                             audioPlayer.src = url;
@@ -181,9 +181,9 @@ async function submitText() {
         loadingSpinner.style.display = "none"; // Hide spinner after process completion
 
         if (response.ok) {
-            resultOutput.textContent = data.factCheckResult;
-            if (data.audio) {
-                const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+            resultOutput.textContent = data.result; // FIX: Changed from data.factCheckResult to data.result
+            if (data.audio_result) { // FIX: Changed from data.audio to data.audio_result
+                const audioBytes = Uint8Array.from(atob(data.audio_result), c => c.charCodeAt(0));
                 const blob = new Blob([audioBytes], { type: "audio/mp3" });
                 const url = URL.createObjectURL(blob);
                 audioPlayer.src = url;
@@ -237,9 +237,9 @@ async function uploadImage() {
         loadingSpinner.style.display = "none"; // Hide spinner after process completion
 
         if (response.ok) {
-            resultOutput.textContent = data.factCheckResult;
-            if (data.audio) {
-                const audioBytes = Uint8Array.from(atob(data.audio), c => c.charCodeAt(0));
+            resultOutput.textContent = data.result; // FIX: Changed from data.factCheckResult to data.result
+            if (data.audio_result) { // FIX: Changed from data.audio to data.audio_result
+                const audioBytes = Uint8Array.from(atob(data.audio_result), c => c.charCodeAt(0));
                 const blob = new Blob([audioBytes], { type: "audio/mp3" });
                 const url = URL.createObjectURL(blob);
                 audioPlayer.src = url;
@@ -304,6 +304,8 @@ async function addNewsSource() {
 // Function to attach event listeners to remove buttons
 function attachRemoveSourceListener(button, sourceId) {
     button.onclick = async () => {
+        // IMPORTANT: Avoid using window.confirm directly in Canvas environments
+        // Consider a custom modal dialog for better user experience.
         if (!confirm("Are you sure you want to remove this source and all its articles?")) {
             return;
         }
@@ -312,7 +314,7 @@ function attachRemoveSourceListener(button, sourceId) {
             formData.append("source_id", sourceId);
 
             const response = await fetch(`${BASE_URL}/news/remove_source`, {
-                method: "POST", // Changed to POST as per app.py
+                method: "POST",
                 body: formData,
             });
             const data = await response.json();
@@ -463,7 +465,6 @@ async function fetchNewsArticles(sourceId = null, append = false) {
         console.error("Fetch news articles error:", err);
         articlesList.innerHTML = '<li>Unable to load news articles. Network error or server issue.</li>';
         showMessageBox("Failed to fetch news articles. Please try again.", true);
-        loadMoreBtn.style.display = 'none';
     }
 }
 
