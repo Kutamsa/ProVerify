@@ -35,7 +35,8 @@ const ARTICLES_PER_PAGE = 10; // Consistent with backend limit
 // Helper function to display messages to the user
 function showMessageBox(message, isError = false) {
     messageBox.textContent = message;
-    messageBox.style.backgroundColor = isError ? "#f44336" : "#4CAF50";
+    // Updated colors to match the new palette: Red for error, Green for success
+    messageBox.style.backgroundColor = isError ? "#EF4444" : "#22C55E";
     messageBox.style.display = "block";
     setTimeout(() => {
         messageBox.style.opacity = 1;
