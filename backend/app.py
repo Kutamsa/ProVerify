@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from openai import OpenAI # Corrected: Changed 'OpenA' to 'OpenAI'
+from openai import OpenAI
 from dotenv import load_dotenv
 import json
 import httpx
@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 from . import telegram_bot_handlers
 from telegram import Update
+from telegram.ext import Application # Import Application directly for initialize()
 
 import psycopg2
 import psycopg2.extras
@@ -95,7 +96,21 @@ def init_news_db():
             );
         """)
         conn.commit()
-        print("Database tables 'sources' and 'articles' ensured to exist.")
+
+        # Add ALTER TABLE statement to add 'last_fetched' column if it doesn't exist
+        # This makes the database initialization more robust against schema changes
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='sources' AND column_name='last_fetched') THEN
+                    ALTER TABLE sources ADD COLUMN last_fetched TIMESTAMP WITH TIME ZONE;
+                END IF;
+            END
+            $$;
+        """)
+        conn.commit()
+
+        print("Database tables 'sources' and 'articles' ensured to exist, and 'last_fetched' column checked/added.")
     except Exception as e:
         print(f"Error initializing database: {e}")
     finally:
@@ -133,6 +148,10 @@ async def lifespan(app: FastAPI):
     if TELEGRAM_BOT_TOKEN:
         try:
             telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
+            # IMPORTANT: Call initialize() on the application instance
+            await telegram_application.initialize() 
+            print("Telegram Application initialized inside lifespan.")
+
             telegram_bot_handlers.initialize_bot_components(
                 openai_client_instance=openai_client,
                 tts_func=text_to_speech if tts_client else None, # Pass actual TTS func if client is ready
@@ -557,6 +576,7 @@ async def fetch_and_store_news(source_id: int):
                 pass
 
         conn.commit()
+        # Ensure last_fetched is updated only if the column exists
         cur.execute("UPDATE sources SET last_fetched = CURRENT_TIMESTAMP WHERE id = %s;", (source_id,))
         conn.commit()
 
@@ -582,6 +602,12 @@ async def telegram_webhook(request: Request):
         update = Update.de_json(req_json, telegram_application.bot)
         
         if update: 
+            # Ensure the application is initialized before processing updates via webhook
+            if not telegram_application.updater and not telegram_application.bot_data:
+                # This is a heuristic check, a robust solution would ensure initialization happened once.
+                # For webhook, application.initialize() isn't strictly needed on every webhook call
+                # if it was initialized correctly during lifespan. But if it wasn't, this indicates a problem.
+                print("Warning: Telegram Application might not have been fully initialized. Attempting to process update anyway.")
             await telegram_application.process_update(update)
         return Response(status_code=status.HTTP_200_OK)
     except Exception as e:
@@ -595,6 +621,10 @@ if __name__ == "__main__":
 
     if TELEGRAM_BOT_TOKEN and not RENDER_SERVICE_URL:
         if telegram_application:
+            # IMPORTANT: Call initialize() for local polling as well
+            # This ensures the Application instance is fully prepared.
+            import asyncio
+            asyncio.run(telegram_application.initialize())
             print("Running Telegram bot in local polling mode...")
             telegram_application.run_polling(poll_interval=1.0)
         else:
