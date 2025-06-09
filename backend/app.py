@@ -41,7 +41,7 @@ GOOGLE_CREDENTIALS_JSON_CONTENT = os.getenv("GOOGLE_CREDENTIALS_JSON")
 tts_client = None
 telegram_application = None
 
-# Initialize OpenAI Client outside lifespan as it has no external dependencies beyond API key
+# Initialize OpenAI Client globally as it doesn't depend on lifespan
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 # --- Database Connection ---
@@ -98,7 +98,6 @@ def init_news_db():
         conn.commit()
 
         # Add ALTER TABLE statement to add 'last_fetched' column if it doesn't exist
-        # This makes the database initialization more robust against schema changes
         cur.execute("""
             DO $$
             BEGIN
@@ -135,7 +134,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             print(f"Error initializing Google TTS client: {e}")
             tts_client = None
-            # Clean up temp file if creation succeeded but client init failed
             if os.path.exists(temp_file.name):
                 os.remove(temp_file.name)
     else:
@@ -148,7 +146,6 @@ async def lifespan(app: FastAPI):
     if TELEGRAM_BOT_TOKEN:
         try:
             telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
-            # IMPORTANT: Call initialize() on the application instance
             await telegram_application.initialize() 
             print("Telegram Application initialized inside lifespan.")
 
@@ -156,7 +153,8 @@ async def lifespan(app: FastAPI):
                 openai_client_instance=openai_client,
                 tts_func=text_to_speech if tts_client else None, # Pass actual TTS func if client is ready
                 authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
-                perform_image_factcheck_func=perform_image_factcheck
+                perform_image_factcheck_func=perform_image_factcheck, # Pass the unified image fact-check function
+                transcribe_audio_func=transcribe_audio # Pass transcribe_audio function
             )
             print("Telegram bot components initialized within lifespan.")
         except Exception as e:
@@ -168,7 +166,6 @@ async def lifespan(app: FastAPI):
     yield # Application starts here
 
     # Cleanup on shutdown
-    # Clean up temporary Google credentials file
     if GOOGLE_CREDENTIALS_JSON_CONTENT and os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
         temp_file_path = os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
         if os.path.exists(temp_file_path):
@@ -189,26 +186,26 @@ app.add_middleware(
 )
 
 # --- Static Files (HTML, CSS, JS) ---
-# Assuming app.py is in 'backend' and static files are in 'frontend'
 current_dir = os.path.dirname(os.path.abspath(__file__))
-frontend_dir = os.path.join(current_dir, "..", "frontend") # Go up one level, then into frontend
-
-# Mount the 'frontend' directory to serve all static files under /frontend/
-# e.g., /frontend/index.html, /frontend/style.css, /frontend/script.js
+frontend_dir = os.path.join(current_dir, "..", "frontend") 
 app.mount("/frontend", StaticFiles(directory=frontend_dir), name="frontend")
 
 
 # --- Utility Functions ---
-# Note: text_to_speech relies on tts_client, which is initialized in lifespan
-def text_to_speech(text: str) -> bytes:
+
+class TextInput(BaseModel):
+    text: str
+
+def text_to_speech(text: str) -> str: # Modified to return base64 string directly
+    """Converts text to speech using Google Cloud TTS and returns base64 encoded MP3 audio."""
     if not tts_client:
         print("TTS client not available for synthesis.")
-        return b"" # Return empty bytes if client not available
+        return "" # Return empty string if client not available
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
         language_code="te-IN", 
-        name="te-IN-Chirp3-HD-Achird", # Retained user's specified voice name
-        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE # Retained user's specified gender
+        name="te-IN-Chirp3-HD-Achird", 
+        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
@@ -217,74 +214,172 @@ def text_to_speech(text: str) -> bytes:
         response = tts_client.synthesize_speech(
             input=synthesis_input, voice=voice, audio_config=audio_config
         )
-        return response.audio_content
+        return base64.b64encode(response.audio_content).decode('utf-8')
     except Exception as e:
         print(f"Error synthesizing speech: {e}")
-        return b""
+        return ""
 
 async def transcribe_audio(audio_file: UploadFile) -> str:
-    # Save the uploaded audio to a temporary file
-    temp_audio_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    # Read the audio content directly into memory
+    content = await audio_file.read()
+    
+    # Create an in-memory file-like object for OpenAI API
+    audio_bytes_io = io.BytesIO(content)
+    audio_bytes_io.name = "audio.mp3" # Assign a name, though not strictly required by OpenAI
+    
     try:
-        content = await audio_file.read()
-        temp_audio_file.write(content)
-        temp_audio_file.close()
-
         # OpenAI Whisper API for transcription
-        with open(temp_audio_file.name, "rb") as audio:
-            transcript = openai_client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio
-            )
+        transcript = openai_client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_bytes_io # Pass the BytesIO object
+        )
         return transcript.text
     except Exception as e:
         print(f"Error during audio transcription: {e}")
         return f"Error transcribing audio: {e}"
     finally:
-        os.remove(temp_audio_file.name)
+        audio_bytes_io.close() # Close the in-memory BytesIO object
 
-async def perform_text_factcheck(text: str) -> str:
+async def perform_text_factcheck(input_text: str):
     if not OPENAI_API_KEY:
-        return "Error: OpenAI API key is not configured for text fact-checking."
+        return {"error": "Error: OpenAI API key is not configured for text fact-checking."}
+    
+    messages = [
+        {
+            "role": "system",
+            "content": "You are a smart and honest Telugu-speaking fact checker. You speak like a well-informed, friendly human who mixes Telugu and English naturally. You never repeat yourself. Be accurate, clear, and real."
+        },
+        {
+            "role": "user",
+            "content": "మోదీ అమెరికా ప్రదాని"
+        },
+        {
+            "role": "assistant",
+            "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు జో బైడెన్. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
+        },
+        {
+            "role": "user",
+            "content": f"""
+You're given a statement in Telugu. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
+
+Statement:
+"{input_text}"
+
+Instructions:
+- Respond in clear, simple Telugu using its native script (తెలుగు లిపిలో) — use English only where needed.
+- Do not respond in bullet points. Write like you're explaining it to someone directly.
+- If the statement is false, explain why.
+- If it's true, provide some brief context or clarification.
+- If it's controversial, be honest and neutral. Don't dodge the question.
+- If you don't know, say so clearly.
+- Do not repeat yourself.
+- Use natural sentence flow like a real person would.
+"""
+        }
+    ]
+
     try:
-        chat_completion = openai_client.chat.completions.create(
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful and accurate fact-checking assistant. Provide concise and neutral fact-checks for the given text. If you cannot determine the veracity, state that clearly."
-                },
-                {
-                    "role": "user",
-                    "content": f"Fact-check this: {text}"
-                }
-            ],
+        ai_response = openai_client.chat.completions.create(
             model="o4-mini",
+            messages=messages
         )
-        return chat_completion.choices[0].message.content
+        fact_check_result = ai_response.choices[0].message.content
+        audio_base64 = text_to_speech(fact_check_result)
+        return {"result": fact_check_result, "audio_result": audio_base64}
     except Exception as e:
         print(f"Error during text fact-check: {e}")
-        return f"Error during fact-check: {e}"
+        return {"error": f"Error during fact-check: {e}"}
 
-async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str:
+async def perform_audio_factcheck(audio_file_content: bytes):
+    # Create a BytesIO object for the audio content to mimic UploadFile for transcribe_audio
+    mock_audio_file = io.BytesIO(audio_file_content)
+    mock_audio_file.name = "audio.mp3" # Give it a name for transcription
+    
+    if not OPENAI_API_KEY:
+        return {"error": "Error: OpenAI API key is not configured for audio fact-checking."}
+
+    try:
+        # Transcribe audio using the transcribe_audio function
+        transcribed_text = await transcribe_audio(UploadFile(file=mock_audio_file, filename="audio.mp3", content_type="audio/mp3"))
+        if transcribed_text.startswith("Error"):
+            return {"error": transcribed_text}
+
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a smart and honest Telugu-speaking fact checker. You speak like a well-informed, friendly human who mixes Telugu and English naturally. You never repeat yourself. Be accurate, clear, and real."
+            },
+            {
+                "role": "user",
+                "content": "మోదీ అమెరికా ప్రదాని"
+            },
+            {
+                "role": "assistant",
+                "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు జో బైడెన్. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
+            },
+            {
+                "role": "user",
+                "content": f"""
+You're given a statement in Telugu. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
+
+Statement:
+"{transcribed_text}" 
+
+Instructions:
+- Respond in clear, simple Telugu — use English only where needed.
+- Do not respond in bullet points. Write like you're explaining it to someone directly.
+- If the statement is false, explain why.
+- If it's true, provide some brief context or clarification.
+- If it's controversial, be honest and neutral. Don't dodge the question.
+- If you don't know, say so clearly.
+- Do not repeat yourself.
+- Use natural sentence flow like a real person would.
+"""
+            }
+        ]
+
+        ai_response = openai_client.chat.completions.create(
+            model="o4-mini",
+            messages=messages
+        )
+
+        fact_check_result = ai_response.choices[0].message.content
+        audio_base64_result = text_to_speech(fact_check_result)
+        return {"transcription": transcribed_text, "result": fact_check_result, "audio_result": audio_base64_result}
+    except Exception as e:
+        print(f"Error during audio fact-check: {e}")
+        return {"error": f"Error during fact-check: {e}"}
+
+
+async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: str = None):
     if not GEMINI_API_KEY:
-        return "Gemini API key is not configured for image fact-checking."
+        return {"error": "Gemini API key is not configured for image fact-checking."}
 
     # Robust MIME type detection
-    mime_type = None
-    img_type = imghdr.what(None, h=image_data)
+    # Use imghdr.what for robust detection
+    img_type = imghdr.what(None, h=image_bytes)
+    mime_type_for_gemini = None
+
     if img_type:
-        mime_type = f"image/{img_type}"
+        mime_type_for_gemini = f"image/{img_type}"
     else:
         # Fallback for types imghdr might not recognize, e.g., webp
-        print("Warning: imghdr could not determine image type. Falling back to octet-stream.")
-        mime_type = "application/octet-stream"
+        # If original mime_type from UploadFile is image/webp, use it.
+        if mime_type == 'image/webp':
+            mime_type_for_gemini = 'image/webp'
+        else:
+            print("Warning: imghdr could not determine image type. Falling back to octet-stream or original MIME type if allowed.")
+            # For robustness, only allow specific image types
+            allowed_mime_types = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+            if mime_type in allowed_mime_types:
+                mime_type_for_gemini = mime_type
+            else:
+                return {"error": f"Unsupported image MIME type: {mime_type}. Allowed: {', '.join(allowed_mime_types)}"}
 
-
-    image_parts = []
-    image_parts.append({
-        "mime_type": mime_type,
-        "data": base64.b64encode(image_data).decode("utf-8")
-    })
+    if len(image_bytes) == 0:
+        return {"error": "Empty image data received"}
+    
+    b64_image = base64.b64encode(image_bytes).decode("utf-8")
 
     model_name = "gemini-2.0-flash"
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
@@ -294,11 +389,29 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
     }
 
     prompt_parts = [
-        {"text": "Analyze the following image for any factual inaccuracies, misleading content, or provide context if it's being used deceptively. Be neutral and precise. If there's a caption, consider it in your analysis."},
-        {"inline_data": image_parts[0]},
+        {
+            "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.
+            
+            {f"Context provided: {caption}" if caption else "No additional context provided."}
+            
+            Instructions:
+            - Respond in clear, simple Telugu — use English only where needed.
+            - Do not respond in bullet points. Write like you're explaining it to someone directly.
+            - Analyze what you see in the image and determine if it appears authentic or manipulated.
+            - If you detect signs of manipulation, explain what you notice.
+            - If it appears genuine, provide context about what the image shows.
+            - If it's controversial or you're uncertain, be honest about limitations.
+            - Do not repeat yourself.
+            - Use natural sentence flow like a real person would.
+            """
+        },
+        {
+            "inlineData": {
+                "mimeType": mime_type_for_gemini,
+                "data": b64_image
+            }
+        }
     ]
-    if caption:
-        prompt_parts.append({"text": f"Caption/Question: {caption}"})
 
     data = {
         "contents": [{"parts": prompt_parts}],
@@ -315,83 +428,63 @@ async def perform_image_factcheck(image_data: bytes, caption: str = None) -> str
             response = await client.post(gemini_url, headers=headers, json=data, timeout=30.0)
             response.raise_for_status()
             response_data = response.json()
-            if response_data and "candidates" in response_data and len(response_data["candidates"]) > 0:
-                first_candidate = response_data["candidates"][0]
-                if "content" in first_candidate and "parts" in first_candidate["content"]:
-                    for part in first_candidate["content"]["parts"]:
-                        if "text" in part:
-                            return part["text"]
-            return "No fact-check result could be extracted from the image."
+            
+            fact_check_result = "No result text found."
+            if response_data.get('candidates') and len(response_data['candidates']) > 0 and \
+               response_data['candidates'][0].get('content') and \
+               response_data['candidates'][0]['content'].get('parts') and \
+               len(response_data['candidates'][0]['content']['parts']) > 0:
+                fact_check_result = response_data['candidates'][0]['content']['parts'][0].get('text', 'No result text found.')
+            else:
+                print(f"DEBUG: Unexpected Gemini response structure for image: {response_data}")
+
+            audio_base64 = text_to_speech(fact_check_result)
+            return {"result": fact_check_result, "audio_result": audio_base64, "sources": []} # No citations without grounding
     except httpx.HTTPStatusError as e:
-        print(f"HTTP error during Gemini image fact-check: {e.response.status_code} - {e.response.text}")
-        return f"Error processing image: {e.response.text}"
+        error_message = f"Gemini API HTTP Error (Image Fact-Check): Status {e.response.status_code}, Response: {e.response.text}"
+        print(f"Error: {error_message}")
+        return {"error": error_message}
+    except json.JSONDecodeError as e:
+        error_message = f"Failed to parse Gemini API response as JSON: {e}"
+        print(f"Error: {error_message}")
+        return {"error": error_message}
     except Exception as e:
-        print(f"Error during Gemini image fact-check: {e}")
-        return f"Error processing image: {e}"
+        error_message = f"An unexpected error occurred during Gemini image processing: {type(e).__name__}: {e}"
+        print(f"Error: {error_message}", exc_info=True)
+        return {"error": error_message}
 
 
 # --- FastAPI Endpoints ---
 @app.get("/")
 async def read_root():
-    # Serve index.html from the mounted frontend directory
     return FileResponse(os.path.join(frontend_dir, 'index.html'))
 
 @app.post("/factcheck/audio")
-async def factcheck_audio(audio_file: UploadFile = File(...)):
-    transcription = await transcribe_audio(audio_file)
-    if transcription.startswith("Error"):
-        return JSONResponse(status_code=500, content={"error": transcription})
-
-    fact_check_result = await perform_text_factcheck(transcription)
-
-    # Removed 'await' as text_to_speech is synchronous
-    audio_response = text_to_speech(fact_check_result) 
-    if not audio_response:
-        return JSONResponse(status_code=500, content={"error": "Failed to synthesize audio response."})
-
-    return JSONResponse(content={
-        "transcription": transcription,
-        "factCheckResult": fact_check_result,
-        "audio": base64.b64encode(audio_response).decode('utf-8')
-    })
+async def factcheck_audio_web(audio_file: UploadFile = File(...)):
+    # Read content directly into memory
+    content = await audio_file.read()
+    response = await perform_audio_factcheck(content)
+    if "error" in response:
+        return JSONResponse(status_code=500, content=response)
+    return JSONResponse(content=response)
 
 @app.post("/factcheck/text")
-async def factcheck_text(item: dict):
-    text = item.get("text")
-    if not text:
-        return JSONResponse(status_code=400, content={"error": "Text input is required."})
-
-    fact_check_result = await perform_text_factcheck(text)
-
-    # Removed 'await' as text_to_speech is synchronous
-    audio_response = text_to_speech(fact_check_result) 
-    if not audio_response:
-        return JSONResponse(status_code=500, content={"error": "Failed to synthesize audio response."})
-
-    return JSONResponse(content={
-        "factCheckResult": fact_check_result,
-        "audio": base64.b64encode(audio_response).decode('utf-8')
-    })
+async def factcheck_text_web(item: TextInput):
+    response = await perform_text_factcheck(item.text)
+    if "error" in response:
+        return JSONResponse(status_code=500, content=response)
+    return JSONResponse(content=response)
 
 @app.post("/factcheck/image")
-async def factcheck_image(image: UploadFile = File(...), caption: str = Form(None)):
+async def factcheck_image_web(
+    image: UploadFile = File(...),
+    caption: str = Form(None)
+):
     image_data = await image.read()
-    if not image_data:
-        return JSONResponse(status_code=400, content={"error": "Image file is required."})
-
-    fact_check_result = await perform_image_factcheck(image_data, caption)
-    if fact_check_result.startswith("Error") or "No fact-check result could be extracted" in fact_check_result:
-        return JSONResponse(status_code=500, content={"error": fact_check_result})
-
-    # Removed 'await' as text_to_speech is synchronous
-    audio_response = text_to_speech(fact_check_result) 
-    if not audio_response:
-        return JSONResponse(status_code=500, content={"error": "Failed to synthesize audio response."})
-
-    return JSONResponse(content={
-        "factCheckResult": fact_check_result,
-        "audio": base64.b64encode(audio_response).decode('utf-8')
-    })
+    response = await perform_image_factcheck(image_data, image.content_type, caption)
+    if "error" in response:
+        return JSONResponse(status_code=500, content=response)
+    return JSONResponse(content=response)
 
 @app.post("/news/add_source")
 async def add_news_source(source_url: str = Form(...), source_name: str = Form(...)):
@@ -445,7 +538,6 @@ async def get_news_sources():
         if not conn:
             return JSONResponse(status_code=500, content={"error": "Database connection not established."})
         cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-        # Removed ORDER BY created_at DESC as it might not exist in older DB instances
         cur.execute("SELECT id, name, url FROM sources ORDER BY id DESC;") 
         sources = cur.fetchall()
         return JSONResponse(status_code=200, content={"sources": [dict(s) for s in sources]})
@@ -480,14 +572,12 @@ async def get_news_articles(
             query += " WHERE a.source_id = %s"
             params.append(source_id)
 
-        # Changed ORDER BY to use 'fetched_at' for more reliability without 'created_at'
         query += " ORDER BY a.fetched_at DESC NULLS LAST LIMIT %s OFFSET %s;"
         params.extend([limit, offset])
 
         cur.execute(query, params)
         articles = cur.fetchall()
 
-        # Check if there are more articles for pagination
         has_more = False
         count_query = "SELECT COUNT(*) FROM articles"
         count_params = []
@@ -502,21 +592,19 @@ async def get_news_articles(
 
         all_articles = []
         for article in articles:
-            # Ensure pub_date is converted to datetime if it's not already, before calling isoformat()
             pub_date_obj = None
             if article['pub_date']:
                 if isinstance(article['pub_date'], datetime):
                     pub_date_obj = article['pub_date']
-                else: # Attempt to parse if it's a string
+                else: 
                     try:
-                        # Attempt to parse common formats
                         pub_date_obj = datetime.fromisoformat(str(article['pub_date']))
                     except ValueError:
-                        try: # Fallback for formats like feedparser might return
+                        try: 
                             pub_date_obj = datetime.strptime(str(article['pub_date']), '%a, %d %b %Y %H:%M:%S %z')
                         except ValueError:
                             print(f"Warning: Could not parse pub_date string: {article['pub_date']}")
-                            pub_date_obj = None # Set to None if parsing fails
+                            pub_date_obj = None 
             
             pub_date_str = pub_date_obj.isoformat() if pub_date_obj else None
             
@@ -564,7 +652,7 @@ async def fetch_and_store_news(source_id: int):
             link = entry.link
             pub_date = None
             if hasattr(entry, 'published_parsed'):
-                pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc) # Ensure timezone-aware datetime
+                pub_date = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
             
             try:
                 cur.execute("INSERT INTO articles (source_id, title, link, pub_date) VALUES (%s, %s, %s, %s) ON CONFLICT (link) DO NOTHING;",
@@ -576,7 +664,6 @@ async def fetch_and_store_news(source_id: int):
                 pass
 
         conn.commit()
-        # Ensure last_fetched is updated only if the column exists
         cur.execute("UPDATE sources SET last_fetched = CURRENT_TIMESTAMP WHERE id = %s;", (source_id,))
         conn.commit()
 
@@ -602,11 +689,7 @@ async def telegram_webhook(request: Request):
         update = Update.de_json(req_json, telegram_application.bot)
         
         if update: 
-            # Ensure the application is initialized before processing updates via webhook
             if not telegram_application.updater and not telegram_application.bot_data:
-                # This is a heuristic check, a robust solution would ensure initialization happened once.
-                # For webhook, application.initialize() isn't strictly needed on every webhook call
-                # if it was initialized correctly during lifespan. But if it wasn't, this indicates a problem.
                 print("Warning: Telegram Application might not have been fully initialized. Attempting to process update anyway.")
             await telegram_application.process_update(update)
         return Response(status_code=status.HTTP_200_OK)
@@ -619,15 +702,29 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
 
+    # This block will be used for local development if RENDER_SERVICE_URL is not set
     if TELEGRAM_BOT_TOKEN and not RENDER_SERVICE_URL:
-        if telegram_application:
-            # IMPORTANT: Call initialize() for local polling as well
-            # This ensures the Application instance is fully prepared.
+        if telegram_application: # Check if initialized by lifespan (if not running with reload=True)
             import asyncio
+            # Manually initialize if running this block directly without FastAPI's lifespan
             asyncio.run(telegram_application.initialize())
             print("Running Telegram bot in local polling mode...")
             telegram_application.run_polling(poll_interval=1.0)
         else:
-            print("Telegram bot token set, but initialization failed. Cannot run polling.")
-    
-    uvicorn.run(app, host="0.0.0.0", port=port)
+            # If telegram_application is None here, it means the token was set but lifespan didn't run
+            # or failed. Re-initialize for local polling.
+            telegram_application = telegram_bot_handlers.setup_telegram_bot_application(TELEGRAM_BOT_TOKEN)
+            telegram_bot_handlers.initialize_bot_components(
+                openai_client_instance=openai_client,
+                tts_func=text_to_speech,
+                authorized_ids=AUTHORIZED_TELEGRAM_USER_IDS,
+                perform_image_factcheck_func=perform_image_factcheck,
+                transcribe_audio_func=transcribe_audio
+            )
+            import asyncio
+            asyncio.run(telegram_application.initialize())
+            print("Running Telegram bot in local polling mode...")
+            telegram_application.run_polling(poll_interval=1.0)
+    else:
+        print("Running Uvicorn server for web app and webhook endpoint...")
+        uvicorn.run(app, host="0.0.0.0", port=port)
