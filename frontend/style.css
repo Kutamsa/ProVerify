@@ -33,7 +33,7 @@ html {
     margin: 40px auto 20px auto;
     /* Retained centering */
     width: 96%;
-    max-width: 1200px;
+    max-width: 1800px;
     color: #fff;
     /* Reverted to original white text */
     text-align: center;
@@ -48,7 +48,7 @@ html {
 }
 
 .subtitle {
-    font-size: 1.2rem;
+    font-size: 1.4rem;
     font-weight: 300;
     opacity: 0.9;
 }
