@@ -282,14 +282,14 @@ async function addNewsSource() {
             rssUrlInput.value = "";
             sourceNameInput.value = "";
             await loadNewsSources(); // Reload sources to display the new one
-            // After adding a new source, proactively fetch and store its articles
-            // Then, fetch and display articles for the currently selected source, or all news
-            // If there's no activeSourceId, it will fetch all news by default.
-            // If there's an activeSourceId, we re-select it to refresh its articles.
-            if (activeSourceId) {
-                await selectNewsSource(activeSourceId);
+
+            // After adding a new source, select it to trigger article loading
+            // The backend returns the ID of the newly added source, so we can use that.
+            if (data.id) {
+                await selectNewsSource(data.id);
             } else {
-                fetchNewsArticles(); // Load all news if no specific source was selected
+                // Fallback: If for some reason ID is not returned, just re-fetch all news.
+                fetchNewsArticles();
             }
         } else {
             showMessageBox(`Error: ${data.error || "Failed to add source."}`, true);
@@ -396,7 +396,8 @@ async function selectNewsSource(sourceId) {
             console.error("Error fetching and storing new articles for source:", data.error);
             showMessageBox(`Error updating news for source: ${data.error}`, true);
         }
-    } catch (error) {
+    }
+    catch (error) {
         console.error("Network error during fetch_and_store:", error);
         showMessageBox("Network error updating news for source.", true);
     }

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from openai import OpenAI
+from openai import OpenA
 from dotenv import load_dotenv
 import json
 import httpx
@@ -188,8 +188,8 @@ def text_to_speech(text: str) -> bytes:
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
         language_code="te-IN", 
-        name="te-IN-Chirp3-HD-Puck-MALE", # Changed to Chirp3 voice
-        ssml_gender=texttospeech.SsmlVoiceGender.MALE # Changed gender to MALE
+        name="te-IN-Chirp3-HD-Achird", # Updated voice name as per user's snippet
+        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE # Updated gender as per user's snippet
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
@@ -239,7 +239,7 @@ async def perform_text_factcheck(text: str) -> str:
                     "content": f"Fact-check this: {text}"
                 }
             ],
-            model="o4-mini", # Changed to o4-mini
+            model="o4-mini",
         )
         return chat_completion.choices[0].message.content
     except Exception as e:

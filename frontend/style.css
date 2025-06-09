@@ -1,645 +1,445 @@
 /* Reset and base styles */
 *,
-*::before,
+*:: before,
 *::after {
-    box-sizing: border-box;
+    box - sizing: border - box;
 }
 
 body,
 html {
     margin: 0;
     padding: 0;
-    font-family: 'Inter', sans-serif;
-    /* Using 'Inter' as specified in general instructions */
-    background: linear-gradient(135deg, #F6F8FB 0%, #F3F0FF 100%);
-    /* Light Neutral / Soft Lavender background */
-    color: #22223B;
-    /* Main Text: Almost Black */
-    line-height: 1.6;
-    display: flex;
-    flex-direction: column;
-    min-height: 100vh;
+    font - family: 'Segoe UI', Roboto, sans - serif;
+    background: linear - gradient(135deg, #667eea 0 %, #764ba2 100 %);
+    /* Main page background - retained */
+    color: #222;
 }
 
-/* Full-width header styled as a distinct box */
-.header-full {
-    background: linear-gradient(135deg, #3B4CCA 0%, #7C3AED 100%);
-    /* Deep Blue to Vibrant Purple gradient */
+/* Full-width header now styled as a distinct, left-shifted box */
+.header - full {
+    /* New box styling */
+    background: linear - gradient(135deg, #20317c 0 %, #764ba2 100 %);
+    /* Matches the new module box background */
     padding: 30px 20px 10px;
-    border-radius: 16px;
+    border - radius: 16px;
     /* Rounded corners */
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    box - shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
     /* Subtle shadow */
+    border - bottom: none;
+    /* Removed the previous bottom border */
+
+    /* Responsive adjustments */
+    width: 96 %;
+    /* Occupy most of the width */
+    max - width: 1200px;
+    /* Allow it to grow, but set a max */
     margin: 40px auto 20px auto;
-    /* Centered with top margin */
-    width: 96%;
-    max-width: 1200px;
-    color: #FFFFFF;
-    /* White text for contrast */
-    text-align: center;
-    position: relative;
-    /* For potential future absolute positioning of elements */
+    /* Centered with top/bottom margin */
+    color: white;
+    /* Text color for the header */
 }
 
-.main-title {
-    font-size: 2.8rem;
-    /* Larger title */
-    margin-bottom: 5px;
-    letter-spacing: 1.5px;
-    font-weight: 700;
+.main - title {
+    font - size: 2.8rem;
+    margin: 0;
+    color: #fff;
+    /* White color for main title */
 }
 
 .subtitle {
-    font-size: 1.2rem;
-    font-weight: 300;
-    opacity: 0.9;
+    font - size: 1rem;
+    margin - top: 6px;
+    color: #eee;
+    /* Lighter color for subtitle */
 }
 
-/* Main Layout for two panels */
+/* Layout */
 .layout {
     display: flex;
-    flex-wrap: wrap;
-    /* Allow wrapping on smaller screens */
-    gap: 30px;
-    /* Space between panels */
+    justify - content: center;
     padding: 20px;
-    width: 96%;
-    max-width: 1200px;
-    margin: 20px auto;
-    flex-grow: 1;
-    /* Allows it to take up available space */
+    gap: 20px;
+    /* Space between panels */
+    max - width: 1200px;
+    margin: 0px auto;
+    /* Center the layout container */
+    align - items: flex - start;
+    /* Prevents stretching of columns */
 }
 
-.left-panel,
-.right-panel {
+.left - panel,
+.right - panel {
     flex: 1;
-    /* Allow panels to grow and shrink */
-    min-width: 300px;
-    /* Minimum width before wrapping */
-    background-color: #FFFFFF;
-    /* Card/Panel Background: White */
-    padding: 30px;
-    border-radius: 16px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    min - width: 300px;
+    /* Ensures minimum width for panels */
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    /* Center content within panels */
-    text-align: center;
+    flex - direction: column;
+    /* Allows module-box to stack if needed */
+    /* Remove explicit height to prevent stretching */
 }
 
-/* Module Box Styling (retained from original structure, applied to .left-panel, .right-panel) */
-.module-box {
-    width: 100%;
-    /* Ensure content fills the panel */
+/* Module */
+.module - box {
+    background: #ffffff;
+    padding: 25px;
+    border - radius: 16px;
+    box - shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
+    margin - bottom: 20px;
+    /* Space between stacked modules, if any */
+    flex - grow: 0;
+    /* Prevents module-box from stretching to fill height */
+    flex - shrink: 0;
 }
 
-.section-title {
-    font-size: 1.8rem;
-    color: #3B4CCA;
-    /* Primary Accent */
-    margin-bottom: 10px;
+.section - title {
+    font - size: 1.8rem;
+    color: #333;
+    margin - top: 0;
+    margin - bottom: 10px;
 }
 
-.section-sub {
-    font-size: 1rem;
-    color: #4B5563;
-    /* Secondary Text: Dark Gray */
-    margin-bottom: 20px;
+.section - sub {
+    font - size: 0.95rem;
+    color: #666;
+    margin - bottom: 20px;
 }
 
-/* Mode Buttons */
-.mode-buttons-row {
+/* Mode buttons */
+.mode - buttons - row {
     display: flex;
-    justify-content: center;
-    gap: 15px;
-    margin-bottom: 30px;
-    flex-wrap: wrap;
-    /* Allow buttons to wrap */
-}
-
-.mode-buttons-row button {
-    background: linear-gradient(135deg, #4053D3 0%, #7C3AED 100%);
-    /* Primary Accent gradient */
-    color: #FFFFFF;
-    border: none;
-    padding: 12px 25px;
-    border-radius: 8px;
-    /* Rounded corners */
-    font-size: 1rem;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    flex-grow: 1;
-    max-width: 180px;
-    /* Limit individual button width */
-}
-
-.mode-buttons-row button:hover {
-    background: linear-gradient(135deg, #3B4CCA 0%, #A78BFA 100%);
-    /* Deeper blue to soft violet on hover */
-    transform: translateY(-2px);
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-}
-
-.mode-buttons-row button.active {
-    background: linear-gradient(135deg, #2A3C9E 0%, #6A2CBF 100%);
-    /* Even deeper for active state */
-    border: 2px solid #A78BFA;
-    /* Highlight active button */
-    transform: translateY(0);
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-/* Record Button */
-.record-btn-wrapper {
-    margin-bottom: 20px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    justify - content: center;
     gap: 10px;
+    margin - bottom: 20px;
+    flex - wrap: wrap;
+    /* Allow wrapping on smaller screens */
 }
 
-.record-circle {
-    width: 80px;
-    height: 80px;
-    background-color: #EF4444;
-    /* Red for recording */
-    border-radius: 50%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    font-size: 3rem;
-    color: #FFFFFF;
+.mode - buttons - row button {
+    padding: 10px 18px;
+    border: none;
+    border - radius: 8px;
+    background - color: #e0e0e0;
+    /* Lighter gray for normal state */
+    color: #333;
+    font - size: 1rem;
     cursor: pointer;
-    border: 5px solid #EF4444;
-    /* Initial state border */
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-}
-
-.record-circle:hover {
-    background-color: #DC2626;
-    /* Darker red on hover */
-    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.3);
-}
-
-.record-circle.recording {
-    background-color: #22C55E;
-    /* Green for active recording (if applicable, or keep red) */
-    border-color: #22C55E;
-    /* Green border when recording */
-    animation: pulse 1.5s infinite ease-in-out;
-}
-
-@keyframes pulse {
-    0% {
-        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
-    }
-
-    70% {
-        box-shadow: 0 0 0 15px rgba(34, 197, 94, 0);
-    }
-
-    100% {
-        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
-    }
-}
-
-.record-label {
-    color: #4B5563;
-    /* Dark Gray */
-    font-size: 1.1rem;
+    transition: background - color 0.3s ease, transform 0.2s ease, box - shadow 0.2s ease;
+    box - shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    flex - grow: 1;
+    /* Allow buttons to grow */
+    max - width: 180px;
+    /* Max width to prevent excessive stretching */
 }
 
 
-/* Text & Image Input Styles */
+.mode - buttons - row button:hover {
+    background - color: #d0d0d0;
+    transform: translateY(-2px);
+    box - shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.mode - buttons - row button.active {
+    background: linear - gradient(135deg, #667eea 0 %, #764ba2 100 %);
+    /* Original gradient for active */
+    color: white;
+    box - shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+}
+
+/* Common form elements */
 textarea,
 input[type="text"] {
-    width: calc(100% - 20px);
-    /* Adjust for padding */
+    width: 100 %;
     padding: 12px;
-    margin-bottom: 20px;
-    border: 1px solid #E5E7EB;
-    /* Soft Gray border */
-    border-radius: 8px;
-    /* Rounded corners */
-    font-size: 1rem;
-    color: #22223B;
-    background-color: #F6F8FB;
-    /* Light Neutral background */
-    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    margin - bottom: 15px;
+    border: 1px solid #ddd;
+    border - radius: 8px;
+    font - size: 1rem;
+    color: #333;
+    background - color: #f9f9f9;
 }
 
-textarea:focus,
-input[type="text"]:focus {
-    border-color: #4053D3;
-    /* Primary Accent on focus */
-    box-shadow: 0 0 0 2px rgba(64, 83, 211, 0.2);
-    outline: none;
-}
-
-textarea {
-    min-height: 120px;
-    resize: vertical;
-}
-
-.mode-section button {
-    background: #4053D3;
-    /* Primary Accent solid */
-    color: #FFFFFF;
+button {
+    padding: 12px 20px;
     border: none;
-    padding: 12px 25px;
-    border-radius: 8px;
-    font-size: 1rem;
+    border - radius: 8px;
+    background: linear - gradient(135deg, #667eea 0 %, #764ba2 100 %);
+    color: white;
+    font - size: 1rem;
     cursor: pointer;
-    transition: background-color 0.3s ease, transform 0.3s ease;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transition: background - color 0.3s ease, transform 0.2s ease, box - shadow 0.2s ease;
+    box - shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
-.mode-section button:hover {
-    background-color: #3B4CCA;
-    /* Slightly darker primary on hover */
-    transform: translateY(-1px);
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+button:hover {
+    transform: translateY(-2px);
+    box - shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
 
-/* Image Upload Specifics */
-.file-row {
+/* Voice mode specific */
+.record - btn - wrapper {
+    text - align: center;
+    margin - top: 20px;
+    margin - bottom: 20px;
     display: flex;
-    align-items: center;
+    /* Use flexbox */
+    justify - content: center;
+    /* Center horizontally */
+    align - items: center;
+    /* Center vertically */
+    flex - direction: column;
+    /* Stack circle and label vertically */
+}
+
+.record - circle {
+    width: 80px;
+    height: 80px;
+    border - radius: 50 %;
+    background - color: #4CAF50;
+    border: none;
+    font - size: 40px;
+    color: white;
+    display: flex;
+    justify - content: center;
+    align - items: center;
+    cursor: pointer;
+    box - shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease;
+}
+
+.record - circle:hover {
+    transform: scale(1.05);
+}
+
+.record - label {
+    margin - top: 10px;
+    font - size: 16px;
+    color: #333;
+}
+
+/* NEW STYLES FOR NEWS FEED SECTION */
+.news - source - input {
+    display: flex;
+    flex - wrap: wrap;
     gap: 10px;
-    margin-bottom: 15px;
-    width: 100%;
+    margin - bottom: 20px;
+    align - items: flex - end;
 }
 
-input[type="file"] {
-    flex-grow: 1;
-    padding: 8px;
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    background-color: #F6F8FB;
-    color: #22223B;
+.news - source - input input[type="text"] {
+    flex: 1 1 45 %;
+    min - width: 150px;
+    margin - bottom: 0;
 }
 
-.trash-icon {
-    font-size: 1.5rem;
-    cursor: pointer;
-    color: #EF4444;
-    /* Red for delete */
-    transition: color 0.3s ease;
+.news - source - input button {
+    flex: 0 0 auto;
+    margin - bottom: 0;
+    padding: 12px 22px;
+    /* Increased padding for "Add Source" button */
+    font - size: 1.05rem;
+    /* Slightly larger font size */
 }
 
-.trash-icon:hover {
-    color: #DC2626;
-    /* Darker red on hover */
-}
-
-
-/* Loading Spinner */
-#loadingSpinner {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    margin: 20px auto;
-    font-size: 1.2rem;
-    color: #4053D3;
-    /* Primary Accent */
-    animation: spin 1s linear infinite;
-    /* Simple spin animation */
-}
-
-@keyframes spin {
-    0% {
-        transform: rotate(0deg);
-    }
-
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
-
-/* Result Output Box */
-.result-text {
-    background-color: #F3F0FF;
-    /* Soft Lavender for result background */
-    border: 1px solid #E0E7FF;
-    /* Light blue border */
-    border-radius: 8px;
-    padding: 20px;
-    margin-top: 25px;
-    text-align: left;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
-}
-
-.result-text h3 {
-    color: #22C55E;
-    /* Green for success */
-    margin-top: 0;
-    font-size: 1.4rem;
-    border-bottom: 2px solid #22C55E;
-    padding-bottom: 5px;
-    margin-bottom: 15px;
-}
-
-.result-text p {
-    color: #22223B;
-    /* Almost Black */
-    font-size: 1rem;
-}
-
-.transcription-box {
-    margin-top: 20px;
+.news - articles - container {
+    background - color: #f0f2f5;
+    /* Lighter background for articles list */
     padding: 15px;
-    background-color: #E5E7EB;
-    /* Soft Gray for transcription background */
-    border-radius: 8px;
-    text-align: left;
+    border - radius: 10px;
+    margin - top: 20px;
+    /* Space after input and buttons */
+    box - shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
-.transcription-box h4 {
-    color: #4B5563;
-    /* Dark Gray */
-    margin-top: 0;
-    margin-bottom: 10px;
+.news - articles - container h3 {
+    color: #333;
+    margin - top: 0;
+    margin - bottom: 15px;
+    font - size: 1.2rem;
 }
 
-.transcription-box p {
-    color: #22223B;
-    font-style: italic;
+.news - articles - container ul {
+    list - style: none;
+    padding: 0;
+    margin: 0;
 }
 
-
-/* News Feed Section */
-.news-source-input {
+.news - articles - container li {
+    background - color: #ffffff;
+    /* White background for each article */
+    padding: 12px;
+    margin - bottom: 8px;
+    border - radius: 8px;
+    box - shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     display: flex;
-    flex-direction: column;
-    gap: 15px;
-    margin-bottom: 25px;
+    flex - direction: column;
+    font - size: 0.95rem;
 }
 
-.news-source-input input {
-    width: 100%;
-    /* Full width within its container */
-    padding: 10px;
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    font-size: 0.95rem;
-    color: #22223B;
-    background-color: #F6F8FB;
+.news - articles - container li a {
+    color: #007bff;
+    /* Link blue */
+    text - decoration: none;
+    font - weight: bold;
+    margin - bottom: 5px;
 }
 
-.news-source-input button {
-    background: #7C3AED;
-    /* Vibrant Purple */
-    color: #FFFFFF;
-    border: none;
-    padding: 10px 20px;
-    border-radius: 8px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: background-color 0.3s ease, transform 0.3s ease;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+.news - articles - container li a:hover {
+    text - decoration: underline;
 }
 
-.news-source-input button:hover {
-    background-color: #A78BFA;
-    /* Soft Violet on hover */
-    transform: translateY(-1px);
+.news - articles - container li span {
+    color: #666;
+    font - size: 0.85rem;
 }
 
-.news-source-buttons-container {
+/* Styles for the container of dynamically added source buttons */
+.news - source - buttons - container {
     display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 25px;
-    justify-content: center;
-}
-
-.source-button {
-    display: flex;
-    align-items: center;
-    background-color: #F3F0FF;
-    /* Soft Lavender */
-    border: 1px solid #E0E7FF;
-    border-radius: 20px;
-    /* More rounded for pills */
-    padding: 8px 15px;
+    flex - wrap: wrap;
     gap: 8px;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+    margin - top: 15px;
+    padding - bottom: 15px;
+    border - bottom: 1px solid #eee;
+    /* Separator */
+    margin - bottom: 15px;
+    /* Space below separator */
 }
 
-.source-button:hover {
-    background-color: #E0E7FF;
-    /* Lighter blue on hover */
-    transform: translateY(-1px);
-    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.1);
-}
-
-.source-button.active-source {
-    background: linear-gradient(90deg, #4053D3 0%, #7C3AED 100%);
-    /* Active source gradient */
-    color: #FFFFFF;
-    border-color: #4053D3;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
-
-.source-button.active-source span {
-    color: #FFFFFF;
-    /* Ensure text is white in active state */
-}
-
-
-.source-button span {
-    font-size: 0.9rem;
-    color: #22223B;
-    /* Almost Black */
-    white-space: nowrap;
-    /* Prevent text wrapping */
-}
-
-.remove-source-btn {
-    background-color: transparent;
-    border: none;
-    color: #64748B;
-    /* Blue Gray */
-    font-size: 0.9rem;
-    cursor: pointer;
-    padding: 0;
-    margin: 0;
-    transition: color 0.3s ease;
-}
-
-.remove-source-btn:hover {
-    color: #EF4444;
-    /* Red on hover */
-}
-
-.news-articles-container h3 {
-    color: #4053D3;
-    /* Primary Accent */
-    margin-top: 0;
-    font-size: 1.4rem;
-    border-bottom: 2px solid #E0E7FF;
-    /* Light blue border */
-    padding-bottom: 5px;
-    margin-bottom: 15px;
-    text-align: left;
-}
-
-#articlesList {
-    list-style: none;
-    padding: 0;
-    margin: 0;
-    text-align: left;
-}
-
-#articlesList li {
-    background-color: #F6F8FB;
-    /* Light Neutral for list item background */
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    padding: 15px;
-    margin-bottom: 10px;
-    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.03);
+.source - button {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    align - items: center;
+    background - color: #f0f8ff;
+    /* Light blue background */
+    border: 1px solid #a8d3ff;
+    border - radius: 20px;
+    padding: 8px 12px;
+    font - size: 0.95rem;
+    color: #333;
+    cursor: pointer;
+    transition: background - color 0.2s ease, box - shadow 0.2s ease;
+    box - shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
 }
 
-#articlesList li:last-child {
-    margin-bottom: 0;
+.source - button:hover {
+    background - color: #e0f2ff;
+    box - shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
-#articlesList li a {
-    color: #2563EB;
-    /* Link Color: Blue */
-    text-decoration: none;
-    font-weight: 600;
-    font-size: 1.1rem;
-    transition: color 0.3s ease;
+.source - button.active - source {
+    background: linear - gradient(45deg, #667eea, #764ba2);
+    color: white;
+    border - color: #667eea;
 }
 
-#articlesList li a:hover {
-    color: #4053D3;
-    /* Primary Accent on link hover */
-    text-decoration: underline;
+.source - button span {
+    margin - right: 8px;
+    /* Space between name and remove button */
+    font - weight: bold;
+    font - size: 1rem;
+    /* Slightly larger font for source name */
 }
 
-#articlesList li span.article-date,
-#articlesList li span.article-source {
-    font-size: 0.9rem;
-    color: #4B5563;
-    /* Secondary Text: Dark Gray */
-    margin-top: 5px;
+.remove - source - btn {
+    background - color: #ff6b6b;
+    /* Red for remove button */
+    color: white;
+    border: none;
+    border - radius: 50 %;
+    width: 28px;
+    /* Bigger button */
+    height: 28px;
+    /* Bigger button */
+    display: flex;
+    justify - content: center;
+    align - items: center;
+    font - size: 1.2rem;
+    /* Larger icon */
+    cursor: pointer;
+    transition: background - color 0.2s ease, transform 0.2s ease;
+    padding: 0;
+    /* Remove default padding */
+    box - shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
 }
+
+.remove - source - btn:hover {
+    background - color: #ff4c4c;
+    transform: scale(1.05);
+    box - shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+}
+
+
+/* Message box for user feedback */
+#messageBox {
+    position: fixed;
+    top: 20px;
+    left: 50 %;
+    transform: translateX(-50 %);
+    background - color: #4CAF50;
+    color: white;
+    padding: 10px 20px;
+    border - radius: 5px;
+    box - shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    z - index: 1000;
+    display: none;
+    opacity: 0;
+    transition: opacity 0.5s ease -in -out;
+    max - width: 90 %;
+    text - align: center;
+}
+
 
 /* Load more button */
-.load-more-btn {
-    background: linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%);
-    /* Vibrant Purple to Soft Violet gradient */
-    color: #FFFFFF;
-    border: none;
-    padding: 12px 30px;
-    border-radius: 8px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    margin: 25px auto 0 auto;
-    /* Centered with top margin */
+.load - more - btn {
+    margin: 15px auto 0 auto;
+    /* Center it below articles */
     display: block;
     /* Make it a block element to center with margin: auto */
 }
 
-.load-more-btn:hover {
-    background: linear-gradient(135deg, #A78BFA 0%, #7C3AED 100%);
-    /* Reverse gradient on hover */
+.load - more - btn:hover {
+    background - color: #434c9c;
     transform: translateY(-1px);
-    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
-}
-
-
-/* Message Box */
-.message-box {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    background-color: #4CAF50;
-    /* Default success green */
-    color: white;
-    padding: 15px 20px;
-    border-radius: 8px;
-    /* Rounded corners */
-    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
-    z-index: 1000;
-    display: none;
-    /* Hidden by default */
-    opacity: 0;
-    transition: opacity 0.5s ease-in-out;
-    max-width: 90%;
-    text-align: center;
-    font-size: 1.1rem;
-    font-weight: 500;
+    box - shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 /* Media queries for overall layout adjustments */
-@media (max-width: 768px) {
+@media(max - width: 768px) {
     .layout {
         padding: 15px;
-        flex-direction: column;
+        flex - direction: column;
         /* Stack panels vertically */
-        align-items: center;
+        align - items: center;
         /* Center stacked panels */
-        gap: 20px;
     }
 
-    .left-panel,
-    .right-panel {
-        width: 100%;
-        max-width: 600px;
-        /* Constrain width on smaller screens */
-        padding: 20px;
+    .left - panel,
+    .right - panel {
+        width: 100 %;
+        max - width: 600px;
+        /* Maintain max-width for content */
+        margin - bottom: 15px;
     }
 
-    .header-full {
-        margin: 20px auto 15px auto;
-        padding: 20px 15px 5px;
+    .news - source - input {
+        flex - direction: column;
+        /* Stack input fields vertically */
+        align - items: stretch;
     }
 
-    .main-title {
-        font-size: 2rem;
+    .news - source - input input[type="text"],
+    .news - source - input button {
+        width: 100 %;
+        flex: unset;
+        /* Remove flex sizing */
     }
 
-    .subtitle {
-        font-size: 1rem;
+    .mode - buttons - row {
+        flex - direction: column;
+        /* Stack mode buttons vertically */
     }
 
-    .mode-buttons-row {
-        flex-direction: column;
-        gap: 10px;
-    }
-
-    .mode-buttons-row button {
-        max-width: 100%;
-    }
-
-    .record-circle {
-        width: 60px;
-        height: 60px;
-        font-size: 2rem;
-    }
-
-    .record-label {
-        font-size: 0.9rem;
-    }
-
-    .news-source-input {
-        flex-direction: column;
-        gap: 10px;
+    .mode - buttons - row button {
+        max - width: 100 %;
     }
 }
