@@ -60,7 +60,7 @@ html {
     gap: 30px;
     padding: 20px;
     width: 96%;
-    max-width: none;
+    max-width: 1200px;
     margin: 10px auto;
     flex-grow: 1;
 }
@@ -87,18 +87,22 @@ html {
     background-color: #fff;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     align-items: center;
     text-align: center;
 }
 
 .left-panel {
-    flex: 0 0 45%;
+    /* flex-grow, flex-shrink, flex-basis */
+    flex: 1 1 calc(45% - 15px);
+    /* 15px is half of the 30px gap */
     min-width: 300px;
 }
 
 .right-panel {
-    flex: 0 0 55%;
+    /* flex-grow, flex-shrink, flex-basis */
+    flex: 1 1 calc(55% - 15px);
+    /* 15px is half of the 30px gap */
     min-width: 300px;
 }
 
