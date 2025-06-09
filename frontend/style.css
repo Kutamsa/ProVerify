@@ -11,7 +11,7 @@ html {
     padding: 0;
     font-family: Arial, sans-serif;
     /* Reverted to original font */
-    background-color: linear-gradient(135deg, #0b0c13 0%, #6f3fc2 100%);
+    background: linear-gradient(135deg, #0b0c13 0%, #6f3fc2 100%);
     /* Reverted to original light gray background */
     color: #333;
     /* Reverted to original text color */
@@ -369,21 +369,28 @@ input[type="file"] {
 /* News Feed Section */
 .news-source-input {
     display: flex;
-    flex-direction: column;
-    gap: 15px;
-    margin-bottom: 25px;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 15px;
+}
+
+.news-source-input input[type="text"] {
+    flex: 1;
+    min-width: 250px;
 }
 
 .news-source-input input {
-    width: 100%;
+    width: auto;
+    flex: 1;
+    min-width: 200px;
     padding: 10px;
     border: 1px solid #ddd;
-    /* Reverted to original border color */
     border-radius: 8px;
     font-size: 0.95rem;
     color: #22223B;
     background-color: #f9f9f9;
-    /* Reverted to original input background */
 }
 
 .news-source-input button {
