@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from openai import OpenA
+from openai import OpenAI # Corrected: Changed 'OpenA' to 'OpenAI'
 from dotenv import load_dotenv
 import json
 import httpx
@@ -188,8 +188,8 @@ def text_to_speech(text: str) -> bytes:
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
         language_code="te-IN", 
-        name="te-IN-Chirp3-HD-Achird", # Updated voice name as per user's snippet
-        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE # Updated gender as per user's snippet
+        name="te-IN-Chirp3-HD-Achird", # Retained user's specified voice name
+        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE # Retained user's specified gender
     )
     audio_config = texttospeech.AudioConfig(
         audio_encoding=texttospeech.AudioEncoding.MP3
