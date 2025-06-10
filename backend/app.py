@@ -371,7 +371,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
     
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-    model_name = "gemini-2.0-flash"
+    model_name = "gemini-2.5-flash-preview"
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
 
     headers = {
@@ -388,8 +388,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
             - Respond in clear, simple Telugu using its script - use english words only when they cannot be avoided.
             - Do not respond in bullet points. Write like you're explaining it to someone directly.
             - Analyze what you see in the image and determine if the words or message in it are correct based on evidence or misinformation.
-            - If it's controversial, be honest and neutral. Don't dodge the question.
-            - If you don't know, say so clearly.
+            - If it's controversial, be honest and neutral. Don't dodge the question give some answer that can be relevant.
             - Do not repeat yourself.
             - Use natural sentence flow like a real person would.
             """
