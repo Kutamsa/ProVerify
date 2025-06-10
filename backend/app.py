@@ -385,7 +385,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
             {f"Context provided: {caption}" if caption else "No additional context provided."}
             
             Instructions:
-            - Limit your response to 200 words.
+            - Your answer must be concise and must not exceed 200 words.Summarize your reasoning if needed to stay within the word limit.
             - Respond in clear, natural Telugu script. Use English only for words that cannot be translated.
             - Do not use bullet points; write in a conversational, explanatory tone.
             - First, briefly describe what the image says or shows.
@@ -394,6 +394,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
             - If the claim is controversial or evidence is mixed, mention this and explain both sides neutrally.
             - If the image is unclear or lacks enough information to fact-check, state this and explain what is missing.
             - Do not repeat yourself. Write as if you are explaining to a friend.
+            - Your answer must be concise and must not exceed 200 words.Summarize your reasoning if needed to stay within the word limit.
             """
         },
         {
