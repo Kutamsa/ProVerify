@@ -371,7 +371,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
     
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
 
-    model_name = "gemini-2.5-flash-preview"
+    model_name = "gemini-2.5-flash-preview-05-20"
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
 
     headers = {
