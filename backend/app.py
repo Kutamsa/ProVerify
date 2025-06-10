@@ -253,18 +253,18 @@ async def perform_text_factcheck(input_text: str):
         },
         {
             "role": "assistant",
-            "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు జో బైడెన్. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
+            "content": "అది తప్పు. మోదీ భారతదేశ ప్రధాని. అమెరికా అధ్యక్షుడు Donald trump. కొన్నిసార్లు ప్రజలు ఈ విషయాన్ని తప్పుగా వినవచ్చు లేదా ప్రచారం చేయవచ్చు, కానీ ఇది నిజం కాదు."
         },
         {
             "role": "user",
             "content": f"""
-You're given a statement in Telugu. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
+You're given a statement. Your job is to fact-check it and respond like a knowledgeable, honest human — not like an AI.
 
 Statement:
 "{input_text}"
 
 Instructions:
-- Respond in clear, simple Telugu using its native script (తెలుగు లిపిలో) — use English only where needed.
+- Respond in clear, simple Telugu using its script - use english words only when they cannot be avoided.
 - Do not respond in bullet points. Write like you're explaining it to someone directly.
 - If the statement is false, explain why.
 - If it's true, provide some brief context or clarification.
@@ -320,7 +320,7 @@ Statement:
 "{transcribed_text}" 
 
 Instructions:
-- Respond in clear, simple Telugu — use English only where needed.
+- Respond in clear, simple Telugu using its script - use english words only when they cannot be avoided.
 - Do not respond in bullet points. Write like you're explaining it to someone directly.
 - If the statement is false, explain why.
 - If it's true, provide some brief context or clarification.
@@ -380,17 +380,16 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
 
     prompt_parts = [
         {
-            "text": f"""You're given an image to fact-check. Your job is to analyze it like a knowledgeable, honest human — not like an AI.
+            "text": f"""You're given an image to fact-check. Your job is to understand what is written in the image like a knowledgeable, honest human — not like an AI.
             
             {f"Context provided: {caption}" if caption else "No additional context provided."}
             
             Instructions:
-            - Respond in clear, simple Telugu — use English only where needed.
+            - Respond in clear, simple Telugu using its script - use english words only when they cannot be avoided.
             - Do not respond in bullet points. Write like you're explaining it to someone directly.
-            - Analyze what you see in the image and determine if it appears authentic or manipulated.
-            - If you detect signs of manipulation, explain what you notice.
-            - If it appears genuine, provide context about what the image shows.
-            - If it's controversial, be honest about limitations.
+            - Analyze what you see in the image and determine if the words or message in it are correct based on evidence or misinformation.
+            - If it's controversial, be honest and neutral. Don't dodge the question.
+            - If you don't know, say so clearly.
             - Do not repeat yourself.
             - Use natural sentence flow like a real person would.
             """
