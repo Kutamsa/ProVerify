@@ -380,17 +380,20 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
 
     prompt_parts = [
         {
-            "text": f"""You're given an image to fact-check. Your job is to understand what is written in the image like a knowledgeable, honest human — not like an AI.
+            "text": f"""You are an expert fact-checker. You are given an image. Your job is to analyze the text or message in the image and determine, as accurately as possible, if it is factual or contains misinformation.
             
             {f"Context provided: {caption}" if caption else "No additional context provided."}
             
             Instructions:
-            - Respond in clear, simple Telugu using its script - use english words only when they cannot be avoided.
-            - Do not respond in bullet points. Write like you're explaining it to someone directly.
-            - Analyze what you see in the image and determine if the words or message in it are correct based on evidence or misinformation.
-            - If it's controversial, be honest and neutral. Don't dodge the question give some answer that can be relevant.
-            - Do not repeat yourself.
-            - Use natural sentence flow like a real person would.
+            - Limit your response to 200 words.
+            - Respond in clear, natural Telugu script. Use English only for words that cannot be translated.
+            - Do not use bullet points; write in a conversational, explanatory tone.
+            - First, briefly describe what the image says or shows.
+            - Next, fact-check the key claim(s) or message in the image using your knowledge and reasoning. If possible, explain your reasoning step by step.
+            - If the image contains incorrect or misleading information, clearly explain why, and provide the correct facts.
+            - If the claim is controversial or evidence is mixed, mention this and explain both sides neutrally.
+            - If the image is unclear or lacks enough information to fact-check, state this and explain what is missing.
+            - Do not repeat yourself. Write as if you are explaining to a friend.
             """
         },
         {
