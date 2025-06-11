@@ -43,14 +43,14 @@ telegram_application = None
 
 # Initialize OpenAI Client globally as it doesn't depend on lifespan
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
-
+CLIP_API_URL = os.getenv("CLIP_API_URL")
 # --- CLIP Similarity ---
 async def check_clip_similarity_external(image_bytes: bytes, caption: str) -> dict:
     try:
         async with httpx.AsyncClient() as client:
             files = {'image': ('image.jpg', image_bytes, 'image/jpeg')}
             data = {'caption': caption}
-            response = await client.post("https://deea-35-202-64-35.ngrok-free.app/clip-similarity", files=files, data=data)
+            response = await client.post(f"{CLIP_API_URL}", files=files, data=data)
             return response.json()
     except Exception as e:
         return {"error": str(e)}
@@ -450,7 +450,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
             audio_base64 = text_to_speech(fact_check_result)
             # Convert the score into a short natural sentence
             if clip_score is not None:
-                clip_score_text = f"Based on a CLIP similarity score of {clip_score}, the caption appears to "
+                clip_score_text = f"similarity score of {clip_score}, the caption"
                 if clip_label == "match":
                     clip_score_text += "accurately match the image."
                 elif clip_label == "partial match":
@@ -462,10 +462,9 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
 
             # Combine into a clean, natural result
             combined_result = f"""
-            🖼️ Image Verification:
+            🖼️ Image Check:
             {clip_score_text}
-
-            🤖 Gemini Fact-Check:
+            Content Check:
             {fact_check_result}
             """
             return {
