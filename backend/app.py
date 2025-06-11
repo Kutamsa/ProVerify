@@ -450,21 +450,21 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
             audio_base64 = text_to_speech(fact_check_result)
             # Convert the score into a short natural sentence
             if clip_score is not None:
-                clip_score_text = f"similarity score of {clip_score}, the caption"
+                clip_score_text = f"ఈ చిత్రానికి, ఆ వివరణ "
                 if clip_label == "match":
-                    clip_score_text += "accurately match the image."
+                    clip_score_text += "పూర్తిగా సరిపోతుంది."
                 elif clip_label == "partial match":
-                    clip_score_text += "somewhat relate to the image, but may not fully match."
+                    clip_score_text += "కొంతవరకు సంబంధం ఉంది కానీ పూర్తిగా సరిపోవచ్చు అనిపించడం లేదు."
                 else:
-                    clip_score_text += "be unrelated or misleading in context of the image."
+                    clip_score_text += "సంబంధం లేని, లేదా తప్పుదారి పట్టించే విధంగా ఉంది."
             else:
-                clip_score_text = "CLIP similarity check could not be performed."
+                clip_score_text = "చిత్రం మరియు వివరణ మధ్య సంబంధం ఖచ్చితంగా నిర్ధారించలేకపోయాం."
 
             # Combine into a clean, natural result
             combined_result = f"""
             🖼️ Image Check:
             {clip_score_text}
-            Content Check:
+            📄 Content Check:
             {fact_check_result}
             """
             return {
