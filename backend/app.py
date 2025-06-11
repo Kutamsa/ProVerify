@@ -44,6 +44,17 @@ telegram_application = None
 # Initialize OpenAI Client globally as it doesn't depend on lifespan
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
+# --- CLIP Similarity ---
+async def check_clip_similarity_external(image_bytes: bytes, caption: str) -> dict:
+    try:
+        async with httpx.AsyncClient() as client:
+            files = {'image': ('image.jpg', image_bytes, 'image/jpeg')}
+            data = {'caption': caption}
+            response = await client.post("https://deea-35-202-64-35.ngrok-free.app/clip-similarity", files=files, data=data)
+            return response.json()
+    except Exception as e:
+        return {"error": str(e)}
+    
 # --- Database Connection ---
 def get_db_connection():
     if not DATABASE_URL:
@@ -369,7 +380,13 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
     if len(image_bytes) == 0:
         return {"error": "Empty image data received"}
     
+    clip_result = await check_clip_similarity_external(image_bytes, caption or "")
+
+    clip_score = clip_result.get("similarity")
+    clip_label = clip_result.get("label", "unknown")    
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
+    # ✨ New: Run CLIP image-text similarity check from external Colab API
+   
 
     model_name = "gemini-2.5-flash-preview-05-20"
     gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={GEMINI_API_KEY}"
@@ -431,7 +448,35 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
                 print(f"DEBUG: Unexpected Gemini response structure for image: {response_data}")
 
             audio_base64 = text_to_speech(fact_check_result)
-            return {"result": fact_check_result, "audio_result": audio_base64, "sources": []} # No citations without grounding
+            # Convert the score into a short natural sentence
+            if clip_score is not None:
+                clip_score_text = f"Based on a CLIP similarity score of {clip_score}, the caption appears to "
+                if clip_label == "match":
+                    clip_score_text += "accurately match the image."
+                elif clip_label == "partial match":
+                    clip_score_text += "somewhat relate to the image, but may not fully match."
+                else:
+                    clip_score_text += "be unrelated or misleading in context of the image."
+            else:
+                clip_score_text = "CLIP similarity check could not be performed."
+
+            # Combine into a clean, natural result
+            combined_result = f"""
+            🖼️ Image Verification:
+            {clip_score_text}
+
+            🤖 Gemini Fact-Check:
+            {fact_check_result}
+            """
+            return {
+                "result": combined_result.strip(),
+                "audio_result": audio_base64,
+                "clip_score": clip_score,         # You can keep for debugging / UI
+                "clip_label": clip_label,
+                "sources": []
+            }
+
+
     except httpx.HTTPStatusError as e:
         error_message = f"Gemini API HTTP Error (Image Fact-Check): Status {e.response.status_code}, Response: {e.response.text}"
         print(f"Error: {error_message}")
@@ -446,6 +491,7 @@ async def perform_image_factcheck(image_bytes: bytes, mime_type: str, caption: s
         return {"error": error_message}
 
 
+    
 # --- FastAPI Endpoints ---
 @app.get("/")
 async def read_root():
